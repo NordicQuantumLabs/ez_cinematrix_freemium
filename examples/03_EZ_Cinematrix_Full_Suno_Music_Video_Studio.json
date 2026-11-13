@@ -1,0 +1,284 @@
+{
+  "last_node_id": 14,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 10,
+      "type": "EZCinematrixCivitaiController_Freemium",
+      "pos": [
+        60,
+        -20
+      ],
+      "size": [
+        520,
+        620
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixCivitaiController_Freemium"
+      }
+    },
+    {
+      "id": 11,
+      "type": "EZCinematrixStudioNoteAndGuide_Freemium",
+      "pos": [
+        1560,
+        -20
+      ],
+      "size": [
+        520,
+        560
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixStudioNoteAndGuide_Freemium"
+      }
+    },
+    {
+      "id": 12,
+      "type": "EZCinematrixSunoMusicVideoStudio_Freemium",
+      "pos": [
+        2620,
+        -20
+      ],
+      "size": [
+        520,
+        620
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixSunoMusicVideoStudio_Freemium"
+      }
+    },
+    {
+      "id": 13,
+      "type": "EZCinematrixOmniReferenceLoader_Freemium",
+      "pos": [
+        -480,
+        740
+      ],
+      "size": [
+        480,
+        720
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixOmniReferenceLoader_Freemium"
+      }
+    },
+    {
+      "id": 1,
+      "type": "EZCinematrixCanvasIngest_Freemium",
+      "pos": [
+        60,
+        740
+      ],
+      "size": [
+        440,
+        560
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixCanvasIngest_Freemium"
+      }
+    },
+    {
+      "id": 2,
+      "type": "EZCinematrixQwenVLTimelineCompiler_Freemium",
+      "pos": [
+        540,
+        740
+      ],
+      "size": [
+        460,
+        760
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixQwenVLTimelineCompiler_Freemium"
+      }
+    },
+    {
+      "id": 3,
+      "type": "EZCinematrixImageModelAndLoraSplitter_Freemium",
+      "pos": [
+        1040,
+        740
+      ],
+      "size": [
+        460,
+        720
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixImageModelAndLoraSplitter_Freemium"
+      }
+    },
+    {
+      "id": 4,
+      "type": "EZCinematrixKrea2ThreeStageSampler_Freemium",
+      "pos": [
+        1560,
+        740
+      ],
+      "size": [
+        480,
+        700
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixKrea2ThreeStageSampler_Freemium"
+      }
+    },
+    {
+      "id": 14,
+      "type": "EZCinematrixPipelineSwitchboard_Freemium",
+      "pos": [
+        1560,
+        1480
+      ],
+      "size": [
+        520,
+        470
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixPipelineSwitchboard_Freemium"
+      },
+      "widgets_values": [
+        "full_studio_image_and_video (Full Studio: Bild [03-04] + Video [05-08])",
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        "bypass_mode_4 (ComfyUI Bypass — Skicka data genom noden, 0s / 0 VRAM)"
+      ]
+    },
+    {
+      "id": 9,
+      "type": "EZCinematrixNeuralAnatomyContinuityDock_Freemium",
+      "pos": [
+        1560,
+        2040
+      ],
+      "size": [
+        460,
+        440
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixNeuralAnatomyContinuityDock_Freemium"
+      }
+    },
+    {
+      "id": 5,
+      "type": "EZCinematrixVideoEngineAndLoraStack_Freemium",
+      "pos": [
+        2100,
+        740
+      ],
+      "size": [
+        460,
+        720
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixVideoEngineAndLoraStack_Freemium"
+      }
+    },
+    {
+      "id": 6,
+      "type": "EZCinematrixVideoDirectorAndGuide_Freemium",
+      "pos": [
+        2620,
+        740
+      ],
+      "size": [
+        480,
+        740
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixVideoDirectorAndGuide_Freemium"
+      }
+    },
+    {
+      "id": 7,
+      "type": "EZCinematrixJointAVTemporalSampler_Freemium",
+      "pos": [
+        3160,
+        740
+      ],
+      "size": [
+        480,
+        720
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixJointAVTemporalSampler_Freemium"
+      }
+    },
+    {
+      "id": 8,
+      "type": "EZCinematrixCinemaVaultPostAndCombine_Freemium",
+      "pos": [
+        3720,
+        740
+      ],
+      "size": [
+        520,
+        760
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "EZCinematrixCinemaVaultPostAndCombine_Freemium"
+      }
+    }
+  ],
+  "links": [],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ez_cinematrix_version": "v1.0 Freemium",
+    "ez_preset_mode": "full_studio",
+    "ez_auto_wire_on_load": true,
+    "ds": {
+      "scale": 0.75,
+      "offset": [
+        120,
+        80
+      ]
+    }
+  },
+  "version": 0.4
+}

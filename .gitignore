@@ -1,0 +1,16 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Protect optional Drop-In PRO v3.5 Vault & local user credentials during ComfyUI-Manager git pull
+*.enc
+allan_ballan_RAW.txt
+.env
+*.local.json
+
+# OS & Editor artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

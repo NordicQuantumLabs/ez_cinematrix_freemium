@@ -1,0 +1,29 @@
+MIT License
+
+Copyright (c) 2026 Nordic Quantum Labs
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated open-source documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished
+to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-------------------------------------------------------------------------------
+OPEN-CORE COMMERCIAL ADDENDUM (OPTIONAL PRO v3.5 VAULT ASSETS):
+All Python custom node source files in the Freemium v1.0 repository are 100%
+open-source under the MIT License above. Optional encrypted PRO v3.5 add-on
+files ("allan_ballan_core.enc" and "signature.enc", distributed separately by
+Nordic Quantum Labs at https://nordicquantumlabs.lemonsqueezy.com) are
+proprietary commercial assets and are NOT covered by the MIT License.

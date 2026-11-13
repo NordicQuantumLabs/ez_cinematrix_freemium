@@ -1,0 +1,17 @@
+# EZ Cinematrix Core v2.6 — Cross-Platform Dependency Manifest
+# Compatible with Windows (ComfyUI Portable / Venv), Linux (CUDA / ROCm), and macOS (MPS)
+# NOTE: torch and torchvision are intentionally omitted or kept unpinned so pip never
+# overwrites your platform-specific CUDA / ROCm / MPS PyTorch build.
+
+numpy>=1.24.0
+scipy>=1.11.0
+Pillow>=10.0.0
+safetensors>=0.4.2
+psutil>=5.9.0
+cryptography>=41.0.0
+av>=11.0.0
+imageio-ffmpeg>=0.4.9
+spandrel>=0.3.0
+transformers>=4.44.0
+accelerate>=0.30.0
+faster-whisper>=1.0.0

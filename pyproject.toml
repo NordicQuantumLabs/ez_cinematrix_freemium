@@ -1,0 +1,33 @@
+[project]
+name = "ez_cinematrix_freemium"
+description = "EZ Cinematrix Studio Suite — 14-Node Audio-Reactive Virtual Production, 3-Stage Krea 2 / Illustrious XL Keyframe Synthesis, Qwen3-VL Timeline Direction, MiniMax H3 Joint AV Sampling, and Unlimited Multi-Window Cinema Vault Mastering for ComfyUI."
+version = "1.0.0"
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Nordic Quantum Labs" }
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "Pillow>=10.0.0",
+    "safetensors>=0.4.2",
+    "psutil>=5.9.0",
+    "cryptography>=41.0.0",
+    "av>=11.0.0",
+    "imageio-ffmpeg>=0.4.9",
+    "spandrel>=0.3.0",
+    "transformers>=4.44.0",
+    "accelerate>=0.30.0",
+    "faster-whisper>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://nordicquantumlabs.lemonsqueezy.com"
+Repository = "https://github.com/NordicQuantumLabs/ez_cinematrix_freemium"
+
+[tool.comfy]
+PublisherId = "nordicquantumlabs"
+DisplayName = "EZ Cinematrix Studio Suite (Freemium v1.0)"
+Icon = ""
