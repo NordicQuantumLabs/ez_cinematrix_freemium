@@ -12,6 +12,130 @@ import comfy.utils
 import latent_preview
 import nodes
 
+def _clamp_sdxl_4ch_resolution_pair(width: int, height: int, max_area: int = 1380000, target_area: int = 1100000) -> tuple:
+    w_in = int(width or 0)
+    h_in = int(height or 0)
+    if w_in <= 0 or h_in <= 0 or (w_in * h_in) <= int(max_area):
+        return (w_in, h_in, False)
+    scale = math.sqrt(float(target_area) / float(max(1, w_in * h_in)))
+    w_clamped = max(512, int(round((float(w_in) * scale) / 16.0) * 16))
+    h_clamped = max(512, int(round((float(h_in) * scale) / 16.0) * 16))
+    return (w_clamped, h_clamped, True)
+
+
+def _apply_beginner_multi_arch_sampler_autopilot(
+    img_arch: str,
+    style_low: str,
+    stage1_steps: int,
+    stage1_cfg: float,
+    stage1_sampler_name: str,
+    stage1_scheduler: str,
+    stage2_steps: int,
+    stage2_cfg: float,
+    handoff_percent: float,
+    final_width: int,
+    final_height: int,
+    is_baked_img_turbo: bool = False,
+    is_sdxl_dmd2: bool = False,
+    is_flux_schnell: bool = False,
+    has_flux_turbo_lora: bool = False,
+) -> dict:
+    arch = str(img_arch or 'krea2').strip().lower()
+    s1_steps = int(stage1_steps)
+    s1_cfg = float(stage1_cfg)
+    s1_sampler = str(stage1_sampler_name or 'euler')
+    s1_sched = str(stage1_scheduler or 'beta')
+    s2_steps = int(stage2_steps)
+    s2_cfg = float(stage2_cfg)
+    ho_pct = float(handoff_percent)
+    fw = int(final_width or 0)
+    fh = int(final_height or 0)
+    log_msg = ''
+    is_sdxl_arch = arch in ('illustrious', 'pony', 'sdxl')
+    if is_sdxl_arch:
+        (fw_new, fh_new, did_clamp_res) = _clamp_sdxl_4ch_resolution_pair(fw, fh)
+        if did_clamp_res:
+            fw, fh = fw_new, fh_new
+        if is_sdxl_dmd2:
+            if s1_steps > 14 or s1_cfg > 2.2 or s1_sched in ('beta', 'simple') or s2_steps > 0:
+                s1_steps = min(12, max(6, s1_steps if s1_steps <= 14 else 8))
+                s1_cfg = 1.2 if s1_cfg > 2.2 else s1_cfg
+                s2_steps = 0
+                ho_pct = 100.0
+                if s1_sched in ('beta', 'simple'):
+                    s1_sampler = 'euler_ancestral'
+                    s1_sched = 'normal'
+                log_msg = f'[EZ-04-MULTIARCH-DMD2] ⚡ {arch.upper()} + DMD2/Lightning 4ch -> Single-Stage ({s1_steps} steg, CFG {s1_cfg:.2f}, {s1_sampler}/{s1_sched}, {fw}x{fh}).'
+        elif s1_steps >= 40 or s1_cfg <= 3.8 or s1_sched == 'beta' or s2_steps > 0:
+            s1_steps = 28 if (s1_steps >= 40 or s1_steps < 16) else s1_steps
+            target_cfg = 4.5 if arch == 'illustrious' else (5.5 if arch == 'pony' else 5.0)
+            if s1_cfg <= 3.8 or s1_cfg > 7.5:
+                s1_cfg = target_cfg
+            s2_steps = 0
+            ho_pct = 100.0
+            if s1_sched == 'beta' or (s1_sampler == 'euler' and s1_sched in ('beta', 'simple')):
+                s1_sampler = 'dpmpp_2m_sde' if arch == 'sdxl' else 'euler_ancestral'
+                s1_sched = 'karras'
+            log_msg = f'[EZ-04-MULTIARCH-AUTO] 🎨 {arch.upper()} 4ch -> Optimal Single-Stage ({s1_steps} steg, CFG {s1_cfg:.1f}, {s1_sampler}/{s1_sched}, {fw}x{fh}).'
+        elif did_clamp_res:
+            log_msg = f'[EZ-04-MULTIARCH-RES] 📐 {arch.upper()} 4ch -> Skalar ner upplösning till optimal {fw}x{fh} (~1.1 MP) mot kontrastbränning.'
+    elif arch == 'flux':
+        if is_flux_schnell:
+            if s1_steps > 6 or s1_cfg > 1.2 or s2_steps > 0 or s1_sched == 'beta':
+                s1_steps = 4
+                s1_cfg = 1.0
+                s1_sampler = 'euler'
+                s1_sched = 'simple'
+                s2_steps = 0
+                ho_pct = 100.0
+                log_msg = f'[EZ-04-FLUX-SCHNELL] ⚡ FLUX.1 Schnell -> Single-Stage ({s1_steps} steg, CFG {s1_cfg:.1f}, {s1_sampler}/{s1_sched}).'
+        elif has_flux_turbo_lora:
+            if s1_steps > 12 or s1_cfg > 1.35 or s2_steps > 0 or s1_sched == 'beta':
+                s1_steps = 8
+                s1_cfg = 1.0
+                s1_sampler = 'euler'
+                s1_sched = 'simple'
+                s2_steps = 0
+                ho_pct = 100.0
+                log_msg = f'[EZ-04-FLUX-TURBO] ⚡ FLUX.1 + Turbo-LoRA -> Single-Stage ({s1_steps} steg, CFG {s1_cfg:.1f}, {s1_sampler}/{s1_sched}).'
+        elif s1_steps >= 40 or s1_cfg >= 2.0 or s2_steps > 0 or s1_sched == 'beta':
+            s1_steps = 24 if (s1_steps >= 40 or s1_steps < 14) else s1_steps
+            s1_cfg = 1.0 if s1_cfg >= 2.0 else s1_cfg
+            s1_sampler = 'euler' if s1_sched == 'beta' else s1_sampler
+            s1_sched = 'simple' if s1_sched == 'beta' else s1_sched
+            s2_steps = 0
+            ho_pct = 100.0
+            log_msg = f'[EZ-04-FLUX-AUTO] ⚡ FLUX.1 Dev -> Optimal Single-Stage ({s1_steps} steg, CFG {s1_cfg:.1f}, {s1_sampler}/{s1_sched}).'
+    elif arch == 'qwen_image':
+        if not is_baked_img_turbo and (s1_steps >= 40 or s2_steps > 0 or s1_sched == 'beta'):
+            s1_steps = 24 if s1_steps >= 40 else s1_steps
+            s1_cfg = 2.5 if s1_cfg >= 2.8 else s1_cfg
+            s1_sched = 'simple' if s1_sched == 'beta' else s1_sched
+            s2_steps = 0
+            ho_pct = 100.0
+            log_msg = f'[EZ-04-QWEN-AUTO] 🎨 QWEN-IMAGE -> Optimal Single-Stage ({s1_steps} steg, CFG {s1_cfg:.1f}, {s1_sampler}/{s1_sched}).'
+    elif is_baked_img_turbo and style_low not in ('cartoonish', 'anime'):
+        if s1_cfg > 1.35 or s1_steps > 10:
+            log_msg = f'[EZ-04-TURBO-GUARD] ⚡ Inbakad Krea 2 Turbo aktiv -> Justerar automatiskt CFG ({s1_cfg:.2f} -> 1.00) och stegbudget ({s1_steps} -> {min(8, max(4, s1_steps))}) för ren Blackwell/Turbo-exponering.'
+        s1_cfg = min(1.20, s1_cfg) if s1_cfg <= 1.35 else 1.0
+        s2_cfg = min(1.20, s2_cfg) if s2_cfg <= 1.35 else 1.0
+        s1_steps = min(8, max(4, s1_steps))
+        if s2_steps > 0:
+            s2_steps = min(6, max(4, s2_steps))
+    return {
+        'stage1_steps': s1_steps,
+        'stage1_cfg': s1_cfg,
+        'stage1_sampler_name': s1_sampler,
+        'stage1_scheduler': s1_sched,
+        'stage2_steps': s2_steps,
+        'stage2_cfg': s2_cfg,
+        'handoff_percent': ho_pct,
+        'final_width': fw,
+        'final_height': fh,
+        'log_msg': log_msg,
+    }
+
+
 class EzCinematrixThreeStageAdapter:
     """Adapter executing Krea 2 3-stage sampling (Stage 1 -> Bislerp Upscale -> Stage 2 Turbo -> Stage 3 Polish) and VAE keyframe decoding."""
 
@@ -197,35 +321,36 @@ class EzCinematrixThreeStageAdapter:
         eff_src_img = raw_src if (isinstance(raw_src, torch.Tensor) and raw_src.numel() > 0 and float(raw_src.detach().abs().max().item()) > 1e-04 and not is_t2i_mode) else None
         is_baked_img_turbo = bool(bus.get('baked_in_image_turbo', False) or getattr(stage1_model, '_ez_baked_in_turbo', False))
         is_sdxl_dmd2_04 = bool(is_sdxl_arch_04 and (bus.get('sdxl_dmd2_active', False) or getattr(stage1_model, '_ez_sdxl_dmd2_active', False) or getattr(stage1_model, '_ez_baked_sdxl_turbo', False)))
-        if is_sdxl_arch_04:
-            if is_sdxl_dmd2_04:
-                if int(stage1_steps) > 14 or float(stage1_cfg) > 2.2 or str(stage1_scheduler) == 'beta' or int(stage2_steps) > 0:
-                    stage1_steps = min(12, max(6, int(stage1_steps) if int(stage1_steps) <= 14 else 8))
-                    stage1_cfg = 1.2 if float(stage1_cfg) > 2.2 else float(stage1_cfg)
-                    stage2_steps = 0
-                    handoff_percent = 100.0
-                    if str(stage1_sampler_name) == 'euler' and str(stage1_scheduler) == 'beta':
-                        stage1_sampler_name = 'euler_ancestral'
-                        stage1_scheduler = 'normal'
-                    print(f'[EZ-04-ILLUSTRIOUS-DMD2] ⚡ {img_arch_04.upper()} + DMD2/Lightning 4ch aktiv -> Autokonfigurerar Single-Stage ({int(stage1_steps)} steg, CFG {float(stage1_cfg):.2f}, {stage1_sampler_name}/{stage1_scheduler}).')
-            elif int(stage1_steps) >= 40 or float(stage1_cfg) <= 3.8 or str(stage1_scheduler) == 'beta' or (int(stage2_steps) > 0 and float(stage2_cfg) <= 1.5):
-                stage1_steps = 28 if (int(stage1_steps) >= 40 or int(stage1_steps) < 16) else int(stage1_steps)
-                stage1_cfg = (5.5 if img_arch_04 == 'illustrious' else 6.0) if float(stage1_cfg) <= 3.8 else float(stage1_cfg)
-                if int(stage2_steps) > 0 and float(stage2_cfg) <= 1.5:
-                    stage2_steps = 0
-                    handoff_percent = 100.0
-                if str(stage1_sampler_name) == 'euler' and str(stage1_scheduler) == 'beta':
-                    stage1_sampler_name = 'euler_ancestral'
-                    stage1_scheduler = 'karras'
-                print(f'[EZ-04-ILLUSTRIOUS-AUTO] 🎨 {img_arch_04.upper()} 4ch detekterad -> Autokonfigurerar Krea2-parametrar till optimal SDXL Single-Stage ({int(stage1_steps)} steg, CFG {float(stage1_cfg):.1f}, {stage1_sampler_name}/{stage1_scheduler}).')
-        elif is_baked_img_turbo and style_low not in ('cartoonish', 'anime'):
-            if float(stage1_cfg) > 1.35 or int(stage1_steps) > 10:
-                print(f'[EZ-04-TURBO-GUARD] ⚡ Inbakad Krea 2 Turbo aktiv -> Justerar automatiskt CFG ({float(stage1_cfg):.2f} -> 1.00) och stegbudget ({int(stage1_steps)} -> {min(8, max(4, int(stage1_steps)))}) för ren Blackwell/Turbo-exponering.')
-            stage1_cfg = min(1.20, float(stage1_cfg)) if float(stage1_cfg) <= 1.35 else 1.0
-            stage2_cfg = min(1.20, float(stage2_cfg)) if float(stage2_cfg) <= 1.35 else 1.0
-            stage1_steps = min(8, max(4, int(stage1_steps)))
-            if int(stage2_steps) > 0:
-                stage2_steps = min(6, max(4, int(stage2_steps)))
+        is_flux_schnell_04 = bool(img_arch_04 == 'flux' and (bus.get('flux_schnell_active', False) or getattr(stage1_model, '_ez_flux_schnell_active', False)))
+        has_flux_turbo_04 = bool(img_arch_04 == 'flux' and (bus.get('flux_turbo_lora_active', False) or getattr(stage1_model, '_ez_flux_turbo_lora_active', False)))
+        auto_cfg_04 = _apply_beginner_multi_arch_sampler_autopilot(
+            img_arch=img_arch_04,
+            style_low=style_low,
+            stage1_steps=stage1_steps,
+            stage1_cfg=stage1_cfg,
+            stage1_sampler_name=stage1_sampler_name,
+            stage1_scheduler=stage1_scheduler,
+            stage2_steps=stage2_steps,
+            stage2_cfg=stage2_cfg,
+            handoff_percent=handoff_percent,
+            final_width=final_width,
+            final_height=final_height,
+            is_baked_img_turbo=is_baked_img_turbo,
+            is_sdxl_dmd2=is_sdxl_dmd2_04,
+            is_flux_schnell=is_flux_schnell_04,
+            has_flux_turbo_lora=has_flux_turbo_04,
+        )
+        stage1_steps = auto_cfg_04['stage1_steps']
+        stage1_cfg = auto_cfg_04['stage1_cfg']
+        stage1_sampler_name = auto_cfg_04['stage1_sampler_name']
+        stage1_scheduler = auto_cfg_04['stage1_scheduler']
+        stage2_steps = auto_cfg_04['stage2_steps']
+        stage2_cfg = auto_cfg_04['stage2_cfg']
+        handoff_percent = auto_cfg_04['handoff_percent']
+        final_width = auto_cfg_04['final_width']
+        final_height = auto_cfg_04['final_height']
+        if auto_cfg_04['log_msg']:
+            print(auto_cfg_04['log_msg'])
         krea_sig = _compute_krea2_generation_signature(bus=bus, eff_pos_str=eff_pos_str, style_low=style_low, rating_tier=rating_tier, eff_seed=eff_seed, seed_mode=seed_mode, handoff_percent=handoff_percent, stage3_handoff_percent=stage3_handoff_percent, stage1_steps=stage1_steps, stage1_cfg=stage1_cfg, stage1_sampler_name=stage1_sampler_name, stage1_scheduler=stage1_scheduler, stage2_steps=stage2_steps, stage2_cfg=stage2_cfg, stage2_sampler_name=stage2_sampler_name, stage2_scheduler=stage2_scheduler, final_width=final_width, final_height=final_height, upscale_method=upscale_method, i2i_denoise=i2i_denoise, enable_frequency_polish=enable_frequency_polish, skin_blur_radius=skin_blur_radius, skin_texture_strength=skin_texture_strength, skin_polish_opacity=skin_polish_opacity, dock_cfg=dock_cfg, ref_tensors=(eff_src_img, ref_p, ref_c, ref_bg))
         cached_hit = _try_load_cached_krea2_keyframe(krea_sig, force_reuse_latest=('reuse_latest' in mode_low))
         if cached_hit is not None:
@@ -315,16 +440,20 @@ class EzCinematrixThreeStageAdapter:
                 base_w = int(eff_src_img.shape[-2])
             else:
                 (base_w, base_h) = (1248, 832)
+        if is_sdxl_arch_04:
+            (base_w, base_h, _) = _clamp_sdxl_4ch_resolution_pair(base_w, base_h)
         single_stage_mode = int(stage2_steps) <= 0 or float(handoff_percent) >= 99.9
         active_s2_turbo_name = str(bus.get('active_turbo_lora', '') or '').strip()
         s2_t_low = active_s2_turbo_name.lower()
         is_dmd2_or_lcm_04 = bool(is_sdxl_dmd2_04 or any((tk in s2_t_low for tk in ('dmd2', 'lcm', 'lightning', 'hyper', '4step', '8step'))))
-        has_s2_turbo = bool(is_baked_img_turbo or (active_s2_turbo_name and active_s2_turbo_name != 'None' and (is_dmd2_or_lcm_04 or style_low not in ('cartoonish', 'anime'))))
+        has_s2_turbo = bool(is_baked_img_turbo or is_flux_schnell_04 or has_flux_turbo_04 or (active_s2_turbo_name and active_s2_turbo_name != 'None' and (is_dmd2_or_lcm_04 or style_low not in ('cartoonish', 'anime'))))
         eff_s2_cfg = float(stage2_cfg) if has_s2_turbo else (max(3.2, float(stage1_cfg), float(stage2_cfg)) if style_low in ('cartoonish', 'anime') else float(stage2_cfg))
         s2_neg = _zero_out_conditioning(negative) if math.isclose(eff_s2_cfg, 1.0) else negative
         if has_real_i2i:
             eff_final_w = int(final_width) if int(final_width) > 0 else int(bus.get('final_width', base_w) or base_w)
             eff_final_h = int(final_height) if int(final_height) > 0 else int(bus.get('final_height', base_h) or base_h)
+            if is_sdxl_arch_04:
+                (eff_final_w, eff_final_h, _) = _clamp_sdxl_4ch_resolution_pair(eff_final_w, eff_final_h)
             i2i_w = max(64, int(round(float(eff_final_w) / 16.0) * 16))
             i2i_h = max(64, int(round(float(eff_final_h) / 16.0) * 16))
             if omni_b.get('active') and isinstance(omni_b.get('master_composite_image'), torch.Tensor):
@@ -350,7 +479,7 @@ class EzCinematrixThreeStageAdapter:
                         i2i_w = max(64, int(round(math.sqrt(mp_area * src_aspect) / 16.0) * 16))
                         i2i_h = max(64, int(round(math.sqrt(mp_area / src_aspect) / 16.0) * 16))
                 src_bhwc = _compose_multi_reference_canvas(eff_src_img, ref_p, ref_c, ref_bg, target_w=i2i_w, target_h=i2i_h, ootd_strength=s3_ootd_str, preserve_neck_and_hands=s3_pres_nh, horizon_relight_match=s4_relight)
-            vae_src_bhwc = _precondition_i2i_source_for_style_bhwc(
+            vae_src_bhwc = src_bhwc if is_sdxl_arch_04 else _precondition_i2i_source_for_style_bhwc(
                 src_bhwc,
                 style_low=style_low,
                 seed=eff_seed,
@@ -407,7 +536,7 @@ class EzCinematrixThreeStageAdapter:
             else:
                 anc_str = (0.14 if is_2d_style else 0.16) * lock_mult
                 eff_face_anc_lat = None
-            if 'noise_mask' not in latent_input and anc_str > 0.01:
+            if 'noise_mask' not in latent_input and anc_str > 0.01 and (not is_sdxl_arch_04):
                 latent_input['reactor_ref_latent'] = enc_lat_cpu
                 latent_input['reactor_struct_weight'] = min(0.34, anc_str * 0.90)
                 latent_input['reactor_struct_mask'] = (torch.clamp(1.0 - co_star_t2i_mask, 0.0, 1.0) if isinstance(co_star_t2i_mask, torch.Tensor) else anat_core_lat)
@@ -418,9 +547,9 @@ class EzCinematrixThreeStageAdapter:
             tusk_w_s1 = 0.52 if is_2d_style else 0.58
             tusk_w_s2 = 0.42 if is_2d_style else 0.52
             tusk_w_s3 = 0.28 if is_2d_style else 0.58
-            min_s1_single = 4 if (is_baked_img_turbo or is_sdxl_dmd2_04) else 12
-            min_s1_triplet = 6 if (is_baked_img_turbo or is_sdxl_dmd2_04) else 16
-            min_s2_triplet = 4 if (is_baked_img_turbo or is_sdxl_dmd2_04) else 8
+            min_s1_single = 4 if (is_baked_img_turbo or is_sdxl_dmd2_04 or is_flux_schnell_04 or has_flux_turbo_04) else 12
+            min_s1_triplet = 6 if (is_baked_img_turbo or is_sdxl_dmd2_04 or is_flux_schnell_04 or has_flux_turbo_04) else 16
+            min_s2_triplet = 4 if (is_baked_img_turbo or is_sdxl_dmd2_04 or is_flux_schnell_04 or has_flux_turbo_04) else 8
             if single_stage_mode:
                 s1_sig = _sigma_schedule(stage1_model, max(min_s1_single, int(stage1_steps)), stage1_sampler_name, stage1_scheduler, denoise=eff_rf_denoise)
                 try:
@@ -482,7 +611,7 @@ class EzCinematrixThreeStageAdapter:
                 comfy.model_management.unload_all_models()
             if hasattr(comfy.model_management, 'soft_empty_cache'):
                 comfy.model_management.soft_empty_cache()
-            min_s1_t2i = 4 if (is_baked_img_turbo or is_sdxl_dmd2_04) else 12
+            min_s1_t2i = 4 if (is_baked_img_turbo or is_sdxl_dmd2_04 or is_flux_schnell_04 or has_flux_turbo_04) else 12
             if single_stage_mode:
                 s1_run_sig = _sigma_schedule(stage1_model, max(min_s1_t2i, int(stage1_steps)), stage1_sampler_name, stage1_scheduler, denoise=1.0)
             else:
@@ -618,7 +747,8 @@ class EzCinematrixThreeStageAdapter:
                 (pw, ph) = prev_pil.size
                 dock_tag = 'DOCK: OVERRIDE' if dock_cfg else 'ANATOMY: AUTO'
                 polish_tag = f'FREQ-POLISH: ON ({dock_tag})' if enable_frequency_polish else f'FREQ-POLISH: OFF ({dock_tag})'
-                info_txt = f'EZ [04] KREA 2 // STYLE: {style_slug.upper()} // {pw}x{ph} // SEED: {eff_seed} // {polish_tag}'
+                arch_hud_lbl = 'KREA 2' if img_arch_04 == 'krea2' else img_arch_04.upper()
+                info_txt = f'EZ [04] {arch_hud_lbl} // STYLE: {style_slug.upper()} // {pw}x{ph} // SEED: {eff_seed} // {polish_tag}'
                 font_obj = None
                 font_sz = max(22, int(pw * 0.024))
                 for cand_sz in range(font_sz, 13, -2):

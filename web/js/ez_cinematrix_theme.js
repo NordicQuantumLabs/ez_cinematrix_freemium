@@ -1300,6 +1300,35 @@ function mountEzOmniReferencePreviewStrip(node) {
     refreshOmniPreviews();
 }
 
+function inferEzImageArchFromUnetName(filename) {
+    const raw = String(filename || "").replace(/\\/g, "/").toLowerCase();
+    if (!raw || raw === "none") {
+        return { clipType: "krea2", clipSkip: -1, civitaiArch: "KREA2" };
+    }
+    const isKrea = /(krea[\s_\-]?2|krea2|flux1[\s_\-]?krea|musebystableyogi|cutedisaster.*krea|snofs.*krea)/.test(raw);
+    if (!isKrea) {
+        if (/(illustrious|ilxl|noobai|wainsfw|wai[\s_\-]?illustrious|wai[\s_\-]?nsfw|inanime|arblend|hassaku)/.test(raw)) {
+            return { clipType: "illustrious", clipSkip: -2, civitaiArch: "Illustrious" };
+        }
+        if (/(pony|pdxl|autismmix|cyberrealistic[\s_\-]?pony|ponydiffusion)/.test(raw)) {
+            return { clipType: "pony", clipSkip: -2, civitaiArch: "Pony" };
+        }
+        if (/(sdxl|juggernaut|realvis|lustify|bigasp|epicrealismxl|dreamshaperxl)/.test(raw)) {
+            return { clipType: "sdxl", clipSkip: -1, civitaiArch: "SDXL 1.0" };
+        }
+        if (/(qwen[\s_\-]?image|qwenimage)/.test(raw)) {
+            return { clipType: "krea2", clipSkip: -1, civitaiArch: "Qwen-Image" };
+        }
+        if (/(flux1[\s_\-]?schnell|flux\.1[\s_\-]?schnell|schnell)/.test(raw)) {
+            return { clipType: "flux", clipSkip: -1, civitaiArch: "Flux.1 S" };
+        }
+        if (/(flux|chroma|shuttle|pixelwave)/.test(raw)) {
+            return { clipType: "flux", clipSkip: -1, civitaiArch: "Flux.1 D" };
+        }
+    }
+    return { clipType: "krea2", clipSkip: -1, civitaiArch: "KREA2" };
+}
+
 // CIVITAI CONTROLLER & LORA MANAGER WEB-WINDOW STUDIO (Mounted on EZ [10])
 function collapseEzCivitaiNativeWidgets(node, hideRaw = true) {
     if (!node || !Array.isArray(node.widgets)) return;
@@ -1512,6 +1541,11 @@ function mountEzCivitaiControllerWidget(node) {
             if (spec.isVid ? isVideoLoaderNode(gn) : isImageLoaderNode(gn)) {
                 if (filename !== null && filename !== undefined) {
                     setNodeDownstreamWidget(gn, spec.w, filename);
+                    if (slotKey === "image_unet_name" && filename && filename !== "None") {
+                        const infArch = inferEzImageArchFromUnetName(filename);
+                        setNodeDownstreamWidget(gn, "clip_type", infArch.clipType);
+                        setNodeDownstreamWidget(gn, "stop_at_clip_layer", infArch.clipSkip);
+                    }
                 }
                 if (spec.sW && typeof strengthVal === "number" && !Number.isNaN(strengthVal)) {
                     setNodeDownstreamWidget(gn, spec.sW, strengthVal);
@@ -1657,7 +1691,7 @@ function mountEzCivitaiControllerWidget(node) {
                 if (detectFrontendAssetTrueRole(nameVal, "Checkpoint") !== "UNET") return false;
                 const bLow = String(nameVal).split(/[\\/]/).pop().toLowerCase();
                 const isVidUnet = /(?:^|[\s_\-.])(minimax|h3|fl2va|ref2va|hailuo|wan2\.1|wan2\.2|wan2|wan_video|ltxv|ltx[\s_\-]?video|hunyuan[\s_\-]?video|mochi|cogvideox)(?:$|[\s_\-.])|^vid_/i.test(bLow);
-                const isImgUnet = /(?:^|[\s_\-.])(krea2?|flux|sdxl|pony|illustrious|juggernaut|qwen[\s_\-]?image|sd1\.?5|sd3\.?5|playground|pixart|auraflow|kolors)(?:$|[\s_\-.])|^img_/i.test(bLow);
+                const isImgUnet = /(?:^|[\s_\-.])(krea2?|flux|chroma|sdxl|pony|pdxl|autismmix|illustrious|ilxl|noobai|wainsfw|inanime|arblend|juggernaut|realvis|lustify|qwen[\s_\-]?image|sd1\.?5|sd3\.?5|playground|pixart|auraflow|kolors)(?:$|[\s_\-.])|^img_/i.test(bLow);
                 if (!isVid && isVidUnet && !isImgUnet) return false;
                 if (isVid && isImgUnet && !isVidUnet) return false;
             }
@@ -1722,6 +1756,10 @@ function mountEzCivitaiControllerWidget(node) {
             return false;
         }
         setWidgetVal(slotKey, filename);
+        if (slotKey === "image_unet_name" && filename && filename !== "None") {
+            const infArch = inferEzImageArchFromUnetName(filename);
+            setWidgetVal("image_architecture", infArch.civitaiArch);
+        }
         const sKey = SLOT_STRENGTH_MAP[slotKey];
         let appliedStrength = null;
         if (sKey && optSettings && typeof optSettings.rec_strength === "number") {
@@ -2480,7 +2518,7 @@ function mountEzCivitaiControllerWidget(node) {
         const curArch = String(getWidgetVal(archKey, isVid ? "MiniMax H3" : "KREA2"));
         const archOptions = isVid
             ? ["MiniMax H3", "Wan 2.1", "LTXV", "Hunyuan Video"]
-            : ["KREA2", "Flux.1 D", "Flux.1 S", "SDXL 1.0", "Qwen-Image"];
+            : ["KREA2", "Flux.1 D", "Flux.1 S", "Illustrious", "Pony", "SDXL 1.0", "Qwen-Image"];
         const baseKey = isVid ? "video_unet_fl2va" : "image_unet_name";
         const baseVal = String(getWidgetVal(baseKey, "None"));
         const modelOpts = getAvailableSlotOptions(baseKey, false, isVid);
@@ -3240,7 +3278,7 @@ function mountEzCivitaiControllerWidget(node) {
         const isVid = state.civModality === "VIDEO";
         const archList = isVid
             ? ["All", "MiniMax H3", "Wan Video", "LTXV", "Hunyuan Video"]
-            : ["All", "KREA2", "Flux.1 D", "SDXL 1.0", "Qwen-Image", "Pony"];
+            : ["All", "KREA2", "Flux.1 D", "Illustrious", "Pony", "SDXL 1.0", "Qwen-Image"];
         const archBtns = archList.map(a =>
             `<button data-civ-arch="${a}" style="background:${state.civArch === a ? "#eab308" : "#13161f"};color:${state.civArch === a ? "#000" : "#94a3b8"};border:1px solid #334155;border-radius:3px;padding:2px 6px;font-size:8.5px;font-weight:bold;cursor:pointer;">${a}</button>`
         ).join("");
@@ -4443,6 +4481,7 @@ const EZ_WIDGET_LOCALE_MAP = {
     subject_stance_posture: { EN: "subject_stance_posture (Posture)", SV: "subject_stance_posture (Kroppshållning)", ZH: "角色姿态与场景 (stance_posture)", JA: "姿勢 & シーン構成 (stance_posture)", ES: "postura_sujeto", DE: "Körperhaltung", FR: "posture_sujet" },
     body_choreography_preset: { EN: "body_choreography_preset (Choreo)", SV: "body_choreography_preset (Rörelseschema)", ZH: "动作与舞蹈编排 (choreography)", JA: "モーション & 振付 (choreography)", ES: "coreografía_cuerpo", DE: "Körper-Choreografie", FR: "chorégraphie_corps" },
     camera_trajectory_arc: { EN: "camera_trajectory_arc (Camera Arc)", SV: "camera_trajectory_arc (Kamerabana)", ZH: "镜头轨迹与升降 (camera_arc)", JA: "カメラ軌道 & アーク (camera_arc)", ES: "trayectoria_cámara", DE: "Kamera-Flugbahn", FR: "trajectoire_caméra" },
+    scene_continuity_mode: { EN: "scene_continuity_mode (Stage / One-Shot / Multi-Cut)", SV: "scene_continuity_mode (Låst Scen / One-Shot / Scenklipp)", ZH: "场景连续性模式 (锁定 / 一镜到底 / 多场景剪辑)", JA: "シーン連続性モード (固定 / ワンカット / マルチシーン)", ES: "modo_continuidad_escena (Fijo / One-Shot / Cortes)", DE: "Szenen-Kontinuität (Fixiert / One-Shot / Schnitte)", FR: "mode_continuité_scène (Fixe / Plan-Séquence / Coupes)" },
     temporal_window_horizon: { EN: "temporal_window_horizon (PRO Focus Seam / 5s / 10s)", SV: "temporal_window_horizon (PRO Fokus-Skarv / 5s / 10s)", ZH: "时间窗口跨度 (PRO焦点接缝 / 5s / 10s)", JA: "時間ウィンドウ幅 (PROフォーカス継目 / 5s / 10s)", ES: "horizonte_ventana_temporal (PRO / 5s / 10s)", DE: "Zeitfenster-Horizont (PRO Fokus / 5s / 10s)", FR: "horizon_fenêtre_temporelle (PRO / 5s / 10s)" },
     rife_model: { EN: "rife_model", SV: "rife_modell", ZH: "RIFE补帧模型", JA: "RIFE補間モデル", ES: "modelo_rife", DE: "RIFE-Modell", FR: "modèle_rife" },
     rife_multiplier: { EN: "rife_multiplier", SV: "rife_multiplikator", ZH: "RIFE补帧倍率", JA: "RIFE補間倍率", ES: "multiplicador_rife", DE: "RIFE-Multiplikator", FR: "multiplicateur_rife" },
@@ -5598,6 +5637,7 @@ const EZ_INSERTED_WIDGET_NAMES = new Set([
     "subject_stance_posture",
     "body_choreography_preset",
     "camera_trajectory_arc",
+    "scene_continuity_mode",
     "temporal_window_horizon",
     "rubrik_slot_5",
     "slot5_reference_video",
@@ -6288,6 +6328,28 @@ app.registerExtension({
                             };
                         }
                     }
+                    if (baseTypeName === "EZCinematrixImageModelAndLoraSplitter" || baseTypeName.includes("03_Cinematrix")) {
+                        const wUnet03 = selfNode.widgets.find(w => w && w.name === "unet_name");
+                        const wClipType03 = selfNode.widgets.find(w => w && w.name === "clip_type");
+                        const wClipSkip03 = selfNode.widgets.find(w => w && w.name === "stop_at_clip_layer");
+                        if (wUnet03 && !wUnet03._ezMultiArchSyncBound) {
+                            wUnet03._ezMultiArchSyncBound = true;
+                            const origUnetCb03 = wUnet03.callback;
+                            wUnet03.callback = function (val) {
+                                if (val && val !== "None") {
+                                    const inf03 = inferEzImageArchFromUnetName(val);
+                                    if (wClipType03 && (!wClipType03.options || !Array.isArray(wClipType03.options.values) || wClipType03.options.values.includes(inf03.clipType))) {
+                                        wClipType03.value = inf03.clipType;
+                                    }
+                                    if (wClipSkip03) {
+                                        wClipSkip03.value = inf03.clipSkip;
+                                    }
+                                    if (app && app.graph) app.graph.setDirtyCanvas(true, true);
+                                }
+                                if (origUnetCb03) return origUnetCb03.apply(this, arguments);
+                            };
+                        }
+                    }
                     if (baseTypeName === "EZCinematrixQwenVLTimelineCompiler") {
                         const wAudMode = selfNode.widgets.find(w => w && w.name === "audio_soundtrack_mode");
                         if (wAudMode && !wAudMode._ezSunoSyncBound) {
@@ -6599,6 +6661,67 @@ app.registerExtension({
             }
         };
 
+        const computeEzHubStatusPill = (nd, bType) => {
+            if (!nd) return null;
+            const getW = ( target, nm ) => (Array.isArray(target && target.widgets) ? target.widgets.find(w => w && w.name === nm) : null);
+            const isSet = (v) => Boolean(v && String(v).trim() && String(v).trim() !== "None");
+            const countHubActive = (hubNode) => {
+                if (!hubNode || !Array.isArray(hubNode.widgets)) return { img: 0, vid: 0, recipe: false };
+                let imgC = isSet((getW(hubNode, "image_unet_name") || {}).value) ? 1 : 0;
+                for (let i = 1; i <= 4; i++) {
+                    const en = getW(hubNode, `enable_image_lora_${i}`);
+                    const lw = getW(hubNode, `image_style_lora_${i}`);
+                    if ((!en || en.value !== false) && lw && isSet(lw.value)) imgC++;
+                }
+                const itEn = getW(hubNode, "enable_image_turbo_lora");
+                const itLw = getW(hubNode, "image_turbo_lora");
+                if ((!itEn || itEn.value !== false) && itLw && isSet(itLw.value)) imgC++;
+                let vidC = isSet((getW(hubNode, "video_unet_fl2va") || {}).value) ? 1 : 0;
+                for (let i = 1; i <= 4; i++) {
+                    const en = getW(hubNode, `enable_video_lora_${i}`);
+                    const lw = getW(hubNode, `video_lora_${i}`);
+                    if ((!en || en.value !== false) && lw && isSet(lw.value)) vidC++;
+                }
+                const vtEn = getW(hubNode, "enable_video_turbo_lora");
+                const vtLw = getW(hubNode, "video_turbo_lora");
+                if ((!vtEn || vtEn.value !== false) && vtLw && isSet(vtLw.value)) vidC++;
+                const rec = isSet((getW(hubNode, "active_recipe_name") || {}).value);
+                return { img: imgC, vid: vidC, recipe: rec };
+            };
+            if (bType === "EZCinematrixCivitaiController") {
+                const st = countHubActive(nd);
+                if (st.img > 0 || st.vid > 0 || st.recipe) {
+                    return { text: `⚡ HUB SÄNDER (IMG:${st.img} | VID:${st.vid}${st.recipe ? " | RECEPT" : ""})`, color: "#facc15", bg: "rgba(66, 32, 6, 0.95)" };
+                }
+                return { text: "💤 HUB PASSIV (0 LORAS)", color: "#94a3b8", bg: "rgba(15, 23, 42, 0.92)" };
+            }
+            if (bType === "EZCinematrixImageModelAndLoraSplitter" || bType === "EZCinematrixVideoEngineAndLoraStack") {
+                const isVid = bType === "EZCinematrixVideoEngineAndLoraStack";
+                const specPorts = isVid ? ["video_model_spec", "video_lora_spec"] : ["image_model_spec", "image_lora_spec"];
+                let upstreamHub = null;
+                if (Array.isArray(nd.inputs) && app && app.graph) {
+                    for (const pName of specPorts) {
+                        const inp = nd.inputs.find(x => x && x.name === pName && x.link != null);
+                        if (inp && app.graph.links && app.graph.links[inp.link]) {
+                            const lnk = app.graph.links[inp.link];
+                            const srcN = app.graph.getNodeById ? app.graph.getNodeById(lnk.origin_id) : null;
+                            if (srcN) { upstreamHub = srcN; break; }
+                        }
+                    }
+                }
+                if (!upstreamHub) return null;
+                const st = countHubActive(upstreamHub);
+                const activeCnt = isVid ? st.vid : st.img;
+                const modeW = getW(nd, "remote_hub_mode");
+                const isOverride = modeW && String(modeW.value || "").toLowerCase().startsWith("hub_override");
+                if (isOverride && (activeCnt > 0 || st.recipe)) {
+                    return { text: `⚠️ [10] OVERRIDE AKTIV (${activeCnt})`, color: "#fbbf24", bg: "rgba(120, 53, 15, 0.96)" };
+                }
+                return { text: "🛡️ LOKALA VAL VINNER", color: "#34d399", bg: "rgba(6, 78, 59, 0.92)" };
+            }
+            return null;
+        };
+
         const origDrawForeground = nodeType.prototype.onDrawForeground;
         nodeType.prototype.onDrawForeground = function (ctx) {
             if (origDrawForeground) {
@@ -6645,6 +6768,26 @@ app.registerExtension({
             ctx.stroke();
             ctx.fillStyle = "#38bdf8";
             ctx.fillText(locText, locX + 5, pillY + 10.5);
+
+            const hubPill = computeEzHubStatusPill(this, baseTypeName);
+            if (hubPill && this.size[0] > 320) {
+                const hpW = ctx.measureText(hubPill.text).width + 12;
+                const hpX = locX - hpW - 6;
+                if (hpX > 110) {
+                    ctx.fillStyle = hubPill.bg;
+                    ctx.strokeStyle = hubPill.color;
+                    ctx.beginPath();
+                    if (ctx.roundRect) {
+                        ctx.roundRect(hpX, pillY, hpW, pillH, 4);
+                    } else {
+                        ctx.rect(hpX, pillY, hpW, pillH);
+                    }
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.fillStyle = hubPill.color;
+                    ctx.fillText(hubPill.text, hpX + 6, pillY + 10.5);
+                }
+            }
 
             if (guide && this.size[0] > 180) {
                 ctx.font = "bold 9.5px monospace";

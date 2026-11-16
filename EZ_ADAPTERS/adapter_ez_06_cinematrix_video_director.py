@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-from ..EZ_ENGINES.engine_ez_06_cinematrix_video_director import MASTER_DURATION_PRESETS, MOTION_PHYSICS_MODES, SUBJECT_STANCE_POSTURE_PRESETS, BODY_CHOREOGRAPHY_PRESETS, CAMERA_TRAJECTORY_ARC_PRESETS, TEMPORAL_WINDOW_HORIZON_MODES, KINEMATIC_MOTION_PROTOTYPES, resolve_effective_motion_physics_mode, resolve_effective_window_horizon_seconds, _resolve_content_rating_tier, _scrub_unrequested_genital_hallucinations, _scrub_sfx_vocal_triggers, _apply_3axis_window_directives_to_acts, project_video_kinematic_conditioning, _synthesize_start_mid_end_keyframes, _resolve_window_fl2va_start_mid_end, _extract_latent_motion_capture_deltas, _extract_chronological_shot_prompts, _build_reference_video_audio_packet, build_temporal_director_conditioning_and_latent
+from ..EZ_ENGINES.engine_ez_06_cinematrix_video_director import MASTER_DURATION_PRESETS, MOTION_PHYSICS_MODES, SUBJECT_STANCE_POSTURE_PRESETS, BODY_CHOREOGRAPHY_PRESETS, CAMERA_TRAJECTORY_ARC_PRESETS, TEMPORAL_WINDOW_HORIZON_MODES, SCENE_CONTINUITY_MODES, KINEMATIC_MOTION_PROTOTYPES, resolve_effective_motion_physics_mode, resolve_effective_window_horizon_seconds, resolve_scene_continuity_mode, extract_editorial_scenecut_window_indices, _resolve_content_rating_tier, _scrub_unrequested_genital_hallucinations, _scrub_sfx_vocal_triggers, _apply_3axis_window_directives_to_acts, _build_director_preset_and_species_authority, project_video_kinematic_conditioning, _synthesize_start_mid_end_keyframes, _resolve_window_fl2va_start_mid_end, _extract_latent_motion_capture_deltas, _extract_chronological_shot_prompts, _build_reference_video_audio_packet, build_temporal_director_conditioning_and_latent
+
 
 import re
 import math
@@ -13,7 +14,7 @@ class EzCinematrixDirectorAdapter:
     """Adapter routing I2VA/T2VA/REF2VA modes, keyframe anchoring, kinematic motion physics, reference video audio lip-sync, and continuity metadata."""
 
     @staticmethod
-    def compile_guide(video_model_fl2va, video_clip, video_vae, production_mode, timeline_prompt, negative_prompt, video_width, video_height, duration_seconds, frame_rate, overlap_frames, master_duration='20-second', motion_physics_mode='auto_from_style_and_audio (Auto från Stil & Ljud)', motion_transfer_strength=0.65, subject_stance_posture='auto_from_prompt (Auto från Prompt / Bild)', body_choreography_preset='auto_from_prompt_or_audio (Auto från Prompt / Ljud)', camera_trajectory_arc='follow_02_camera_setting (Följ [02] Kamerainställning / Auto)', video_model_ref2va=None, audio_vae=None, keyframe_image=None, ref_image_2_person=None, ref_image_3_clothing=None, ref_image_4_background=None, reference_motion_video=None, reference_video_audio=None, cinematrix_bus=None, temporal_window_horizon=TEMPORAL_WINDOW_HORIZON_MODES[0]):
+    def compile_guide(video_model_fl2va, video_clip, video_vae, production_mode, timeline_prompt, negative_prompt, video_width, video_height, duration_seconds, frame_rate, overlap_frames, master_duration='20-second', motion_physics_mode='auto_from_style_and_audio (Auto från Stil & Ljud)', motion_transfer_strength=0.65, subject_stance_posture='auto_from_prompt (Auto från Prompt / Bild)', body_choreography_preset='auto_from_prompt_or_audio (Auto från Prompt / Ljud)', camera_trajectory_arc='follow_02_camera_setting (Följ [02] Kamerainställning / Auto)', video_model_ref2va=None, audio_vae=None, keyframe_image=None, ref_image_2_person=None, ref_image_3_clothing=None, ref_image_4_background=None, reference_motion_video=None, reference_video_audio=None, cinematrix_bus=None, temporal_window_horizon=TEMPORAL_WINDOW_HORIZON_MODES[0], scene_continuity_mode=SCENE_CONTINUITY_MODES[0]):
         bus = dict(cinematrix_bus) if isinstance(cinematrix_bus, dict) else {}
         tier_prof = dict(bus.get('hardware_tier_profile', {})) if isinstance(bus.get('hardware_tier_profile'), dict) else {}
         if isinstance(cinematrix_bus, dict) and 'duration_seconds' in bus and float(bus['duration_seconds']) > 0.0:
@@ -41,6 +42,8 @@ class EzCinematrixDirectorAdapter:
         bus_stance = str(bus.get('subject_stance_posture', '') or '').strip()
         bus_choreo = str(bus.get('body_choreography_preset', '') or '').strip()
         bus_arc = str(bus.get('camera_trajectory_arc', '') or '').strip()
+        bus_cont_mode = str(bus.get('scene_continuity_mode', '') or '').strip()
+        bus_resolved_cont = str(bus.get('resolved_scene_continuity_mode', '') or '').strip()
         eff_stance = str(subject_stance_posture or '').strip()
         if has_02_master and bus_stance and not bus_stance.lower().startswith('auto_from_prompt'):
             eff_stance = bus_stance
@@ -62,25 +65,35 @@ class EzCinematrixDirectorAdapter:
             eff_arc = bus_arc
         elif eff_arc.lower() == 'random':
             eff_arc = random.choice(CAMERA_TRAJECTORY_ARC_PRESETS[1:])
+        eff_cont_mode = str(scene_continuity_mode or SCENE_CONTINUITY_MODES[0]).strip()
+        if (not eff_cont_mode or eff_cont_mode.lower().startswith('auto_from_prompt')) and bus_cont_mode and not bus_cont_mode.lower().startswith('auto_from_prompt'):
+            eff_cont_mode = bus_cont_mode
+        elif eff_cont_mode.lower().startswith('auto_from_prompt') and has_02_master and bus_resolved_cont in ('locked_stage_environment', 'continuous_one_shot', 'hollywood_multi_scene_cuts'):
+            eff_cont_mode = bus_resolved_cont
+        elif eff_cont_mode.lower() == 'random':
+            eff_cont_mode = random.choice(SCENE_CONTINUITY_MODES[1:])
         bus['subject_stance_posture'] = eff_stance
         bus['body_choreography_preset'] = eff_choreo
         bus['camera_trajectory_arc'] = eff_arc
+        bus['scene_continuity_mode'] = eff_cont_mode
         eff_pos = str(timeline_prompt or '').strip() or str(bus.get('h3_video_timeline_prompt', ''))
-        has_multi_cast_06 = int(bus.get('main_cast_count', 1) or 1) >= 2 or bool(bus.get('has_background_extras', False)) or bool(re.search(r'(?i)(?:<\s*(?:main[_\s-]*)?subject\s*2\s*>|\bcharacter\s*2\b|\btwo[-\s]?shot\b|\binterview(?:ing)?\b|\bgoblin\b|\bsenator\b)', eff_pos))
+        has_multi_cast_06 = int(bus.get('main_cast_count', 1) or 1) >= 2 or bool(bus.get('has_background_extras', False)) or bool(re.search(r'(?i)(?:<\s*(?:main[_\s-]*)?subject\s*2\s*>|\bcharacter\s*2\b|\btwo[-\s]?shot\b|\binterview(?:ing)?\b)', eff_pos))
         is_crowd_scene = has_multi_cast_06 or bool(bus.get('is_multi_subject_crowd', False)) or any(eff_stance.lower().startswith(k) for k in ('standing_social', 'epic_battlefield', 'nsfw_threesome', 'nsfw_orgy'))
         is_outro_follow = eff_arc.lower().startswith('outro_track_to_follow')
-        force_3ax_cam = (not eff_arc.lower().startswith(('follow_02', 'auto', ''))) or eff_stance.lower().startswith('story_vehicle') or eff_choreo.lower().startswith(('running_action', 'catwalk_runway', 'story_multi_act'))
+        user_scene_in_06 = str(bus.get('user_scene_input') or eff_pos).strip()
+        resolved_cont_06 = resolve_scene_continuity_mode(eff_cont_mode, user_scene_in_06, eff_stance, eff_choreo, eff_arc)
+        force_3ax_cam = (resolved_cont_06 != 'locked_stage_environment') or (bool(eff_arc.strip()) and not eff_arc.lower().startswith(('follow_02', 'auto'))) or eff_stance.lower().startswith('story_vehicle') or eff_choreo.lower().startswith(('running_action', 'catwalk_runway', 'story_multi_act'))
         rating_tier = str(bus.get('content_rating_tier', '') or '').strip().lower()
         if not rating_tier:
-            rating_tier = _resolve_content_rating_tier(str(bus.get('content_rating_mode', 'Uncensored')), eff_pos)
+            rating_tier = _resolve_content_rating_tier(str(bus.get('content_rating_mode', 'Uncensored')), eff_pos, eff_stance, eff_choreo)
+        elif rating_tier != 'sfw' and (eff_stance.lower().startswith('nsfw_') or eff_choreo.lower().startswith('nsfw_')):
+            rating_tier = 'nsfw_explicit'
         is_nsfw = (rating_tier != 'sfw')
         style_low = str(bus.get('style_target', '') or '').strip().lower()
         default_core_neg = '(text, logo, watermark, signature, censored, mosaic censorship:1.5), 色调艳丽, 过曝, 静态, 细节模糊不清, 字幕, 风格, 作品, 画作, 画面, 静止, 整体发灰, 最差质量, 低质量, JPEG压缩残留, 丑陋的, 残缺的, 多余的手指, 画得不好的手部, 画得不好的脸部, 畸形的, 毁容的, 形态畸形的肢体, 手指融合, 静止不动的画面, 杂乱的背景, 三条腿, 背景人很多, 倒着走,'
-        user_scene_in_06 = str(bus.get('user_scene_input') or eff_pos).strip()
         if rating_tier == 'sfw':
             default_core_neg = f'(nsfw, nude, naked, nipples, breasts, cleavage, lingerie, bikini, cum, white cum, milky liquid:1.6), {default_core_neg}'
-        elif rating_tier == 'uncensored_action':
-            eff_pos = _scrub_unrequested_genital_hallucinations(eff_pos, user_scene_in_06)
+            eff_pos = _scrub_unrequested_genital_hallucinations(eff_pos, '')
         eff_neg = str(negative_prompt or '').strip() or str(bus.get('adaptive_negative_prompt', '') or default_core_neg).strip()
         bus['adaptive_negative_prompt'] = eff_neg
         allow_cam_move = bool(bus.get('allow_camera_movement', False)) or bool(force_3ax_cam)
@@ -135,11 +148,11 @@ class EzCinematrixDirectorAdapter:
             suno_cfg = {}
             eff_pos = re.sub(r'(?is)\[Non-Diegetic Music\][\s\S]*$', '', eff_pos).strip()
             if bus_aud_mode == 'sfx_only':
-                eff_pos = _scrub_sfx_vocal_triggers(eff_pos)
+                eff_pos = _scrub_sfx_vocal_triggers(eff_pos, user_scene_in_06)
         elif bus_aud_mode == 'instrumental_bgm' and not wants_vocal_mocap:
             if suno_cfg.get('active'):
                 suno_cfg['wants_lipsync'] = False
-            eff_pos = _scrub_sfx_vocal_triggers(eff_pos)
+            eff_pos = _scrub_sfx_vocal_triggers(eff_pos, user_scene_in_06)
         if suno_cfg.get('active'):
             if wants_vocal_mocap:
                 suno_cfg['wants_lipsync'] = True
@@ -224,7 +237,11 @@ class EzCinematrixDirectorAdapter:
         if math.isclose(eff_motion_str, 0.65) and 'slot5_motion_strength' in bus:
             eff_motion_str = float(bus['slot5_motion_strength'])
         eff_horizon_mode = str(temporal_window_horizon or TEMPORAL_WINDOW_HORIZON_MODES[0]).strip()
-        (active_m, pos_c, neg_c, lat_d, fps_out) = build_temporal_director_conditioning_and_latent(video_model_fl2va=video_model_fl2va, video_model_ref2va=video_model_ref2va, video_clip=video_clip, video_vae=video_vae, production_mode=production_mode, timeline_prompt=eff_pos, negative_prompt=eff_neg, video_width=aligned_w, video_height=aligned_h, duration_seconds=eff_duration, frame_rate=frame_rate, overlap_frames=overlap_frames, keyframe_image=eff_kf, audio_vae=audio_vae, tier_profile=tier_prof, ref_image_2_person=eff_ref2, ref_image_3_clothing=eff_ref3, ref_image_4_background=eff_ref4, motion_physics_mode=motion_physics_mode, motion_transfer_strength=eff_motion_str, reference_motion_video=eff_ref_vid, reference_video_audio=eff_ref_aud, style_target=style_low, is_nsfw=is_nsfw, allow_camera_movement=allow_cam_move, subject_stance_posture=eff_stance, body_choreography_preset=eff_choreo, camera_trajectory_arc=eff_arc, rating_tier=rating_tier, temporal_window_horizon=eff_horizon_mode, user_scene_input=user_scene_in_06)
+        (active_m, pos_c, neg_c, lat_d, fps_out) = build_temporal_director_conditioning_and_latent(video_model_fl2va=video_model_fl2va, video_model_ref2va=video_model_ref2va, video_clip=video_clip, video_vae=video_vae, production_mode=production_mode, timeline_prompt=eff_pos, negative_prompt=eff_neg, video_width=aligned_w, video_height=aligned_h, duration_seconds=eff_duration, frame_rate=frame_rate, overlap_frames=overlap_frames, keyframe_image=eff_kf, audio_vae=audio_vae, tier_profile=tier_prof, ref_image_2_person=eff_ref2, ref_image_3_clothing=eff_ref3, ref_image_4_background=eff_ref4, motion_physics_mode=motion_physics_mode, motion_transfer_strength=eff_motion_str, reference_motion_video=eff_ref_vid, reference_video_audio=eff_ref_aud, style_target=style_low, is_nsfw=is_nsfw, allow_camera_movement=allow_cam_move, subject_stance_posture=eff_stance, body_choreography_preset=eff_choreo, camera_trajectory_arc=eff_arc, rating_tier=rating_tier, temporal_window_horizon=eff_horizon_mode, user_scene_input=user_scene_in_06, scene_continuity_mode=eff_cont_mode)
+        eff_neg = str((lat_d.get('ez_continuation_ctx') or {}).get('negative_prompt') or eff_neg).strip()
+        bus['adaptive_negative_prompt'] = eff_neg
+        bus['raw_motion_physics_mode'] = str(motion_physics_mode or '')
+        bus['is_non_human_subject'] = bool(lat_d.get('is_non_human_subject', bus.get('is_non_human_subject', False)))
         if hasattr(comfy.model_management, 'unload_all_models'):
             comfy.model_management.unload_all_models()
         if hasattr(comfy.model_management, 'soft_empty_cache'):
@@ -259,15 +276,17 @@ class EzCinematrixDirectorAdapter:
                 setattr(active_m, '_ez_video_model_meta', dict(vm_meta_06))
             except Exception:
                 pass
-        bus.update({**vm_meta_06, 'production_mode': production_mode, 'video_width': int(aligned_w), 'video_height': int(aligned_h), 'master_duration': resolved_master_dur, 'duration_seconds': eff_duration, 'frame_rate': fps_out, 'overlap_frames': int(overlap_frames), 'video_vae_obj': video_vae, 'audio_vae_obj': audio_vae, 'audio_soundtrack_mode': bus_aud_mode or 'sfx_only', 'suno_bypassed': not bool(suno_cfg.get('active')), 'motion_physics_mode': lat_d.get('motion_physics_mode', 'natural_organic'), 'motion_transfer_strength': eff_motion_str, 'allow_camera_movement': bool(allow_cam_move), 'subject_stance_posture': eff_stance, 'body_choreography_preset': eff_choreo, 'camera_trajectory_arc': eff_arc, 'temporal_window_horizon': eff_horizon_mode, 'window_horizon_seconds': float(lat_d.get('window_horizon_seconds', 5.0)), 'pro_focus_seam_active': bool(lat_d.get('pro_focus_seam_active', True)), 'is_multi_subject_crowd': bool(is_crowd_scene), 'color_saturation_strength': sat_str_06})
+        bus.update({**vm_meta_06, 'production_mode': production_mode, 'video_width': int(aligned_w), 'video_height': int(aligned_h), 'master_duration': resolved_master_dur, 'duration_seconds': eff_duration, 'frame_rate': fps_out, 'overlap_frames': int(overlap_frames), 'video_vae_obj': video_vae, 'audio_vae_obj': audio_vae, 'audio_soundtrack_mode': bus_aud_mode or 'sfx_only', 'suno_bypassed': not bool(suno_cfg.get('active')), 'motion_physics_mode': lat_d.get('motion_physics_mode', 'natural_organic'), 'motion_transfer_strength': eff_motion_str, 'allow_camera_movement': bool(lat_d.get('allow_camera_movement', allow_cam_move)), 'subject_stance_posture': eff_stance, 'body_choreography_preset': eff_choreo, 'camera_trajectory_arc': eff_arc, 'scene_continuity_mode': eff_cont_mode, 'resolved_scene_continuity_mode': str(lat_d.get('resolved_scene_continuity_mode', resolved_cont_06)), 'editorial_scenecut_indices': list(lat_d.get('editorial_scenecut_indices', [])), 'temporal_window_horizon': eff_horizon_mode, 'window_horizon_seconds': float(lat_d.get('window_horizon_seconds', 5.0)), 'pro_focus_seam_active': bool(lat_d.get('pro_focus_seam_active', True)), 'is_multi_subject_crowd': bool(is_crowd_scene), 'color_saturation_strength': sat_str_06})
         lat_d['video_vae_obj'] = video_vae
         lat_d['audio_vae_obj'] = audio_vae
         lat_d['audio_soundtrack_mode'] = bus_aud_mode or 'sfx_only'
         lat_d['suno_bypassed'] = not bool(suno_cfg.get('active'))
-        lat_d['allow_camera_movement'] = bool(allow_cam_move)
+        lat_d['allow_camera_movement'] = bool(lat_d.get('allow_camera_movement', allow_cam_move))
         lat_d['subject_stance_posture'] = eff_stance
         lat_d['body_choreography_preset'] = eff_choreo
         lat_d['camera_trajectory_arc'] = eff_arc
+        lat_d['scene_continuity_mode'] = eff_cont_mode
+        lat_d['resolved_scene_continuity_mode'] = str(lat_d.get('resolved_scene_continuity_mode', resolved_cont_06))
         lat_d['temporal_window_horizon'] = eff_horizon_mode
         lat_d['is_multi_subject_crowd'] = bool(is_crowd_scene)
         lat_d['color_saturation_strength'] = sat_str_06

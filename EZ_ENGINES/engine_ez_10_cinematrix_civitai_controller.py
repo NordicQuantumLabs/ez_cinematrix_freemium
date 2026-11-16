@@ -22,15 +22,15 @@ CIVITAI_DOMAIN_PRESETS = ['civitai.com (Blue — Freemium & Licensed)', 'civitai
 CIVITAI_MODALITY_PRESETS = ['IMAGE — Bild (KREA2 / Flux.1 / SDXL / Pony [SDXL] / Illustrious [SDXL] / Qwen-Image)', 'VIDEO — Video (MiniMax H3 / Wan 2.1 / LTXV / Hunyuan)']
 ARCH_OPTIMAL_SETTINGS_PROFILES = {
     'MINIMAX_H3': {'sampler': 'res_multistep', 'alt_sampler': 'euler', 'scheduler': 'simple', 'steps': 8, 'std_steps': 24, 'cfg': 1.0, 'std_cfg': 3.5, 'denoise': 1.0, 'shift_video': 5.0, 'shift_audio': 3.0, 'rec_lora_strength': 0.25, 'turbo_strength': 1.0, 'turbo_audio_strength': 1.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 0.0, 'note': '8-Step Turbo: res_multistep + simple, Steps 8, CFG 1.0, Denoise 1.00, Shift V:5.0 / A:3.0. Turbo Audio=1.0, Visuella LoRAs=0.15-0.30 (Audio=0.0, CLIP=0.0).'},
-    'KREA2': {'sampler': 'euler', 'alt_sampler': 'res_multistep', 'scheduler': 'beta / simple', 'stage1_scheduler': 'beta', 'stage2_scheduler': 'simple', 'steps': 52, 'handoff_percent': 16.0, 'stage3_handoff_percent': 90.0, 'stage2_steps': 14, 'cfg': 3.0, 'stage2_cfg': 1.0, 'denoise': 0.75, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.75, 'turbo_strength': 0.9, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'Krea2 3-Stegs: Steg 1 (Raw 0->16% av 52 stp = 8 steg): euler + beta @ CFG 3.0 | Steg 2 (Turbo 16->90% på 14-grid): euler + simple @ CFG 1.0 | Steg 3 (HiRes 90->100% = 5 steg).'},
+    'KREA2': {'sampler': 'euler', 'alt_sampler': 'res_multistep', 'scheduler': 'beta / simple', 'stage1_sampler': 'euler', 'stage1_scheduler': 'beta', 'stage2_sampler': 'euler', 'stage2_scheduler': 'simple', 'stage1_steps': 52, 'steps': 52, 'handoff_percent': 58.0, 'stage3_handoff_percent': 90.0, 'stage2_steps': 14, 'stage1_cfg': 3.0, 'cfg': 3.0, 'stage2_cfg': 1.0, 'clip_skip': 1, 'denoise': 0.75, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.75, 'turbo_strength': 0.9, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'Krea2 3-Stegs Flagship: Steg 1 (Raw 0->58% av 52 stp): euler + beta @ CFG 3.0 | Steg 2 (Turbo 58->90% på 14-grid): euler + simple @ CFG 1.0 | Steg 3 (HiRes 90->100%).'},
     'WAN': {'sampler': 'uni_pc', 'alt_sampler': 'euler', 'scheduler': 'simple', 'steps': 20, 'std_steps': 30, 'cfg': 5.0, 'std_cfg': 6.0, 'denoise': 1.0, 'shift_video': 5.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.7, 'turbo_strength': 1.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 0.0, 'note': 'Wan 2.1: uni_pc / simple, Steps 20 (8 med Turbo), CFG 5.0 (1.0 med Turbo), Denoise 1.00, Shift 5.0.'},
     'LTXV': {'sampler': 'euler', 'alt_sampler': 'res_multistep', 'scheduler': 'simple', 'steps': 20, 'std_steps': 25, 'cfg': 3.0, 'std_cfg': 3.5, 'denoise': 1.0, 'shift_video': 2.5, 'shift_audio': 0.0, 'rec_lora_strength': 0.75, 'turbo_strength': 1.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 0.0, 'note': 'LTX-Video: euler + simple, Steps 20, CFG 3.0, Denoise 1.00, Shift 2.5.'},
     'HUNYUAN_VIDEO': {'sampler': 'euler', 'alt_sampler': 'uni_pc', 'scheduler': 'simple', 'steps': 20, 'std_steps': 30, 'cfg': 1.0, 'std_cfg': 6.0, 'denoise': 1.0, 'shift_video': 7.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.75, 'turbo_strength': 1.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 0.0, 'note': 'Hunyuan Video: euler + simple, Steps 20, Embedded CFG 1.0, Shift 7.0.'},
-    'FLUX': {'sampler': 'euler', 'alt_sampler': 'heunpp2', 'scheduler': 'simple', 'steps': 20, 'std_steps': 28, 'cfg': 1.0, 'std_cfg': 1.0, 'denoise': 1.0, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.8, 'turbo_strength': 1.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'Flux.1: euler + simple/beta, Steps 20, CFG 1.0, Style LoRA 0.70-0.90.'},
-    'QWEN_IMAGE': {'sampler': 'euler', 'alt_sampler': 'res_multistep', 'scheduler': 'simple', 'steps': 20, 'std_steps': 28, 'cfg': 2.5, 'std_cfg': 3.0, 'denoise': 1.0, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.75, 'turbo_strength': 0.9, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'Qwen-Image: euler + simple, Steps 20, CFG 2.5.'},
-    'SDXL': {'sampler': 'dpmpp_2m_sde', 'alt_sampler': 'euler_ancestral', 'scheduler': 'karras', 'steps': 28, 'std_steps': 30, 'cfg': 5.5, 'std_cfg': 6.5, 'denoise': 1.0, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.8, 'turbo_strength': 0.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'SDXL 1.0 Basmodell: dpmpp_2m_sde + karras, Steps 28, CFG 5.5, Inbakad Dual CLIP-L/G & 4ch SDXL-VAE.'},
-    'PONY': {'sampler': 'euler_ancestral', 'alt_sampler': 'dpmpp_2m_sde', 'scheduler': 'karras', 'stage1_sampler': 'euler_ancestral', 'stage1_scheduler': 'karras', 'stage1_steps': 28, 'stage1_cfg': 6.0, 'stage2_steps': 0, 'handoff_percent': 100.0, 'stage3_handoff_percent': 90.0, 'steps': 28, 'std_steps': 30, 'cfg': 6.0, 'std_cfg': 6.5, 'denoise': 0.75, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.8, 'turbo_strength': 0.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'Pony V6 XL (Tillhör SDXL 1.0-basmodellfamiljen — CyberRealistic Pony / AutismMix): euler_ancestral + karras, Steps 28, CFG 6.0, CLIP Skip -2, 4ch SDXL-VAE, Auto-taggar: score_9, score_8_up, score_7_up.'},
-    'ILLUSTRIOUS': {'sampler': 'euler_ancestral', 'alt_sampler': 'dpmpp_2m_sde', 'scheduler': 'karras', 'stage1_sampler': 'euler_ancestral', 'stage1_scheduler': 'karras', 'stage1_steps': 28, 'stage1_cfg': 5.5, 'stage2_steps': 0, 'handoff_percent': 100.0, 'stage3_handoff_percent': 90.0, 'steps': 28, 'std_steps': 30, 'cfg': 5.5, 'std_cfg': 6.0, 'denoise': 0.75, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.8, 'turbo_strength': 0.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'Illustrious XL (Tillhör SDXL 1.0-basmodellfamiljen — NoobAI-XL / WAI-NSFW / Anime & Semi-Realism): euler_ancestral + karras, Steps 28, CFG 5.5, CLIP Skip -2, 4ch SDXL-VAE, Auto-taggar: masterpiece, best quality, newest, absurdres.'}
+    'FLUX': {'sampler': 'euler', 'alt_sampler': 'heunpp2', 'scheduler': 'simple', 'stage1_sampler': 'euler', 'stage1_scheduler': 'simple', 'stage1_steps': 24, 'stage1_cfg': 1.0, 'stage2_steps': 0, 'stage2_cfg': 1.0, 'handoff_percent': 100.0, 'stage3_handoff_percent': 90.0, 'clip_skip': 1, 'steps': 24, 'std_steps': 28, 'cfg': 1.0, 'std_cfg': 1.0, 'denoise': 0.75, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.8, 'turbo_strength': 0.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'Flux.1 Dev/Schnell Single-Stage: euler + simple, Steps 24 (4 på Schnell / 8 med Turbo-LoRA), CFG 1.0, Dual CLIP-L + T5-XXL & 16ch ae.safetensors.'},
+    'QWEN_IMAGE': {'sampler': 'euler', 'alt_sampler': 'res_multistep', 'scheduler': 'simple', 'stage1_sampler': 'euler', 'stage1_scheduler': 'simple', 'stage1_steps': 24, 'stage1_cfg': 2.5, 'stage2_steps': 0, 'stage2_cfg': 1.0, 'handoff_percent': 100.0, 'stage3_handoff_percent': 90.0, 'clip_skip': 1, 'steps': 24, 'std_steps': 28, 'cfg': 2.5, 'std_cfg': 3.0, 'denoise': 0.75, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.75, 'turbo_strength': 0.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'Qwen-Image Single-Stage: euler + simple, Steps 24, CFG 2.5, Qwen3-VL 4B & 16ch qwen_image_vae.'},
+    'SDXL': {'sampler': 'dpmpp_2m_sde', 'alt_sampler': 'euler_ancestral', 'scheduler': 'karras', 'stage1_sampler': 'dpmpp_2m_sde', 'stage1_scheduler': 'karras', 'stage1_steps': 28, 'stage1_cfg': 5.0, 'stage2_steps': 0, 'stage2_cfg': 1.0, 'handoff_percent': 100.0, 'stage3_handoff_percent': 90.0, 'clip_skip': 1, 'steps': 28, 'std_steps': 30, 'cfg': 5.0, 'std_cfg': 6.0, 'denoise': 0.75, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.8, 'turbo_strength': 0.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'SDXL 1.0 Single-Stage (Juggernaut / RealVis / Lustify): dpmpp_2m_sde + karras, Steps 28, CFG 5.0, Inbakad Dual CLIP-L/G & 4ch SDXL-VAE (~1.1 MP).'},
+    'PONY': {'sampler': 'euler_ancestral', 'alt_sampler': 'dpmpp_2m_sde', 'scheduler': 'karras', 'stage1_sampler': 'euler_ancestral', 'stage1_scheduler': 'karras', 'stage1_steps': 28, 'stage1_cfg': 5.5, 'stage2_steps': 0, 'stage2_cfg': 1.0, 'handoff_percent': 100.0, 'stage3_handoff_percent': 90.0, 'clip_skip': 2, 'steps': 28, 'std_steps': 30, 'cfg': 5.5, 'std_cfg': 6.0, 'denoise': 0.75, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.8, 'turbo_strength': 0.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'Pony V6 XL Single-Stage (CyberRealistic Pony / AutismMix): euler_ancestral + karras, Steps 28, CFG 5.5, CLIP Skip -2, 4ch SDXL-VAE (~1.1 MP), Auto-taggar: score_9, score_8_up, score_7_up.'},
+    'ILLUSTRIOUS': {'sampler': 'euler_ancestral', 'alt_sampler': 'dpmpp_2m_sde', 'scheduler': 'karras', 'stage1_sampler': 'euler_ancestral', 'stage1_scheduler': 'karras', 'stage1_steps': 28, 'stage1_cfg': 4.5, 'stage2_steps': 0, 'stage2_cfg': 1.0, 'handoff_percent': 100.0, 'stage3_handoff_percent': 90.0, 'clip_skip': 2, 'steps': 28, 'std_steps': 30, 'cfg': 4.5, 'std_cfg': 5.5, 'denoise': 0.75, 'shift_video': 0.0, 'shift_audio': 0.0, 'rec_lora_strength': 0.8, 'turbo_strength': 0.0, 'turbo_audio_strength': 0.0, 'vis_lora_audio_strength': 0.0, 'clip_strength': 1.0, 'note': 'Illustrious XL Single-Stage (WAI-illustrious-SDXL / NoobAI-XL / Anime): euler_ancestral + karras, Steps 28, CFG 4.5 (förhindrar neonbränning!), CLIP Skip -2, 4ch SDXL-VAE (~1.1 MP), Auto-taggar: masterpiece, best quality, newest, absurdres.'}
 }
 COMPANION_ARCH_PROFILES = {
     'KREA2': {
@@ -57,7 +57,7 @@ COMPANION_ARCH_PROFILES = {
     'FLUX': {
         'modality': 'IMAGE',
         'clip_type': 'flux',
-        'unet_match': ('flux1-dev', 'flux1_dev', 'flux', 'chroma'),
+        'unet_match': ('flux1-dev', 'flux1_dev', 'flux1-schnell', 'flux1_schnell', 'flux.1', 'flux', 'chroma'),
         'turbo_match': ('flux_turbo', 'hyper-flux', 'turbo'),
         'clip_match': ('t5xxl_fp8_e4m3fn_scaled', 't5xxl_fp8', 't5xxl', 'clip_l'),
         'vae_match': ('ae.safetensors', 'flux_vae'),
@@ -100,7 +100,7 @@ COMPANION_ARCH_PROFILES = {
     'SDXL': {
         'modality': 'IMAGE',
         'clip_type': 'sdxl',
-        'unet_match': ('sdxl', 'juggernaut', 'realvis', 'lustify', 'bigasp'),
+        'unet_match': ('sdxl', 'juggernautxl', 'juggernaut', 'realvisxl', 'realvis', 'lustify', 'bigasp', 'epicrealismxl', 'dreamshaperxl'),
         'turbo_match': ('sdxl_lightning', 'dmd2', 'lcm', 'hyper-sdxl', 'turbo'),
         'clip_match': ('clip_g', 'clip_l', 'sdxl'),
         'vae_match': ('sdxl_vae', 'sdxl.vae'),
@@ -121,14 +121,14 @@ COMPANION_ARCH_PROFILES = {
     'PONY': {
         'modality': 'IMAGE',
         'clip_type': 'pony',
-        'unet_match': ('pony', 'pdxl', 'autismmix', 'cyberrealistic_pony', 'sdxl'),
+        'unet_match': ('pony', 'pdxl', 'autismmix', 'cyberrealisticpony', 'cyberrealistic_pony', 'ponydiffusion', 'sdxl'),
         'turbo_match': ('sdxl_lightning', 'dmd2', 'lcm', 'hyper-sdxl', 'turbo'),
         'clip_match': ('clip_g', 'clip_l', 'pony', 'sdxl'),
         'vae_match': ('sdxl_vae', 'sdxl.vae', 'pony'),
         'optimal_blueprint': {
             'unet': 'Pony Diffusion V6 XL / CyberRealistic Pony / AutismMix (Tillhör SDXL 1.0-basmodellen)',
             'unet_why': 'Bygger på SDXL 1.0-arkitekturen (~6.5 GB All-in-One Checkpoint) med inbakad Dual CLIP-L/G & 4ch SDXL-VAE.',
-            'turbo_lora': 'Ingen (kör Stage 1 euler_ancestral + karras @ CFG 6.0) eller SDXL Lightning',
+            'turbo_lora': 'Ingen (kör Stage 1 euler_ancestral + karras @ CFG 5.5) eller SDXL Lightning',
             'turbo_why': 'Pony ger högst kvalitet vid 25–30 steg utan Krea2 Turbo-LoRA.',
             'clip': 'Inbakad Pony/SDXL Dual CLIP-L/G (Auto CLIP Skip -2 i EZ [03])',
             'clip_why': 'EZ [03] extraherar automatiskt inbakad CLIP, sätter CLIP Skip -2 och injicerar score_9, score_8_up, score_7_up.',
@@ -142,7 +142,7 @@ COMPANION_ARCH_PROFILES = {
     'ILLUSTRIOUS': {
         'modality': 'IMAGE',
         'clip_type': 'illustrious',
-        'unet_match': ('illustrious', 'ilxl', 'noobai', 'wai-nsfw', 'wai_nsfw', 'sdxl'),
+        'unet_match': ('illustrious', 'ilxl', 'noobai', 'wainsfw', 'wai-illustrious', 'wai_illustrious', 'wai-nsfw', 'wai_nsfw', 'inanime', 'arblend', 'sdxl'),
         'turbo_match': ('sdxl_lightning', 'dmd2', 'lcm', 'hyper-sdxl', 'turbo'),
         'clip_match': ('clip_g', 'clip_l', 'illustrious', 'sdxl'),
         'vae_match': ('sdxl_vae', 'sdxl.vae', 'illustrious'),
@@ -1967,12 +1967,94 @@ def _resolve_period_label(period_preset: str) -> str:
             return p
     return 'AllTime'
 
+CIVITAI_BEGINNER_FILENAME_ALIASES = {
+    'wainsfwillustrious': ('WAI-illustrious-SDXL', '827184'),
+    'waiillustrioussdxl': ('WAI-illustrious-SDXL', '827184'),
+    'waiillustrious': ('WAI-illustrious-SDXL', '827184'),
+    'wainsfw': ('WAI-illustrious-SDXL', '827184'),
+    'noobaixl': ('NoobAI-XL (NAI-XL)', '833294'),
+    'noobai': ('NoobAI-XL (NAI-XL)', '833294'),
+    'cyberrealisticpony': ('CyberRealistic Pony', '443821'),
+    'ponydiffusionv6xl': ('Pony Diffusion V6 XL', '257749'),
+    'ponydiffusionv6': ('Pony Diffusion V6 XL', '257749'),
+    'autismmixsdxl': ('AutismMix SDXL', '288584'),
+    'autismmix': ('AutismMix SDXL', '288584'),
+    'juggernautxl': ('Juggernaut XL', '133005'),
+    'realvisxl': ('RealVisXL V5.0', '139562'),
+    'lustifysdxl': ('LUSTIFY! SDXL NSFW checkpoint', '573152'),
+    'lustify': ('LUSTIFY! SDXL NSFW checkpoint', '573152'),
+}
+
+CIVITAI_NATIVE_BASEMODEL_FILTER_MAP = {
+    'illustrious': 'Illustrious',
+    'pony': 'Pony',
+    'sdxl 1.0': 'SDXL 1.0',
+    'sdxl': 'SDXL 1.0',
+    'flux.1 d': 'Flux.1 D',
+    'flux.1 s': 'Flux.1 S',
+    'wan video': 'Wan Video',
+    'wan 2.1': 'Wan Video',
+    'ltxv': 'LTXV',
+    'hunyuan video': 'Hunyuan Video',
+}
+
+
+def _resolve_civitai_search_query_and_model_id(query_text: str, base_arch: str = 'All') -> dict:
+    raw_q = str(query_text or '').strip()
+    arch_clean = str(base_arch or 'All').strip()
+    if '(' in arch_clean:
+        arch_clean = arch_clean.split('(', 1)[0].strip()
+    if '[' in arch_clean:
+        arch_clean = arch_clean.split('[', 1)[0].strip()
+    arch_low = arch_clean.lower()
+    native_base_model = CIVITAI_NATIVE_BASEMODEL_FILTER_MAP.get(arch_low, '')
+    direct_model_id = ''
+    url_m = re.search(r'civitai\.(?:com|red)/models/(\d+)', raw_q, flags=re.IGNORECASE)
+    if url_m:
+        direct_model_id = url_m.group(1)
+        raw_q = ''
+    elif re.fullmatch(r'#?\d{4,10}', raw_q):
+        direct_model_id = raw_q.lstrip('#')
+        raw_q = ''
+    cleaned_q = re.sub(r'\.(?:safetensors|sft|ckpt|pt|pth|gguf)$', '', raw_q, flags=re.IGNORECASE).strip()
+    cleaned_stem = re.sub(r'[_\-\s]+v?\d+(?:\.\d+)?[a-z]?$', '', cleaned_q, flags=re.IGNORECASE).strip()
+    norm_key = re.sub(r'[^a-z0-9]+', '', cleaned_stem.lower())
+    norm_full = re.sub(r'[^a-z0-9]+', '', cleaned_q.lower())
+    for cand_norm in (norm_key, norm_full):
+        if not cand_norm:
+            continue
+        if cand_norm in CIVITAI_BEGINNER_FILENAME_ALIASES:
+            (canonical_title, canonical_id) = CIVITAI_BEGINNER_FILENAME_ALIASES[cand_norm]
+            cleaned_q = canonical_title
+            if not direct_model_id:
+                direct_model_id = canonical_id
+            break
+        for alias_prefix, (canonical_title, canonical_id) in CIVITAI_BEGINNER_FILENAME_ALIASES.items():
+            if len(alias_prefix) >= 6 and cand_norm.startswith(alias_prefix):
+                cleaned_q = canonical_title
+                if not direct_model_id:
+                    direct_model_id = canonical_id
+                break
+        if direct_model_id:
+            break
+    if not cleaned_q and not direct_model_id and arch_low not in ('all', 'alla', '') and not native_base_model:
+        cleaned_q = arch_clean
+    return {
+        'query': cleaned_q,
+        'arch_clean': arch_clean,
+        'native_base_model': native_base_model,
+        'direct_model_id': direct_model_id,
+    }
+
+
 def query_civitai_catalog(modality: str='IMAGE', asset_type: str='LORA', base_arch: str='All', sort_by: str='Most Downloaded', period: str='AllTime', domain_mode: str='civitai.com', query_text: str='', limit: int=12, force_refresh: bool=False) -> dict:
     if force_refresh:
         purge_civitai_cache(force_clear_all=True)
     else:
         purge_civitai_cache(force_clear_all=False)
     lic = verify_civitai_license_status()
+    api_key = load_civitai_api_key()
+    allow_nsfw_catalog = bool(lic.get('licensed') or bool(api_key))
     req_dom = str(domain_mode or 'civitai.com').lower()
     domains = ['civitai.com']
     domain_notice = ''
@@ -1992,18 +2074,14 @@ def query_civitai_catalog(modality: str='IMAGE', asset_type: str='LORA', base_ar
     sort_clean = _resolve_sort_label(sort_by)
     period_clean = _resolve_period_label(period)
     type_clean = 'Checkpoint' if 'check' in str(asset_type or '').lower() else 'LORA'
-    q_clean = str(query_text or '').strip()
-    arch_clean = str(base_arch or 'All').strip()
-    if '(' in arch_clean:
-        arch_clean = arch_clean.split('(', 1)[0].strip()
-    if '[' in arch_clean:
-        arch_clean = arch_clean.split('[', 1)[0].strip()
-    if arch_clean.lower() not in ('all', 'alla', ''):
-        if arch_clean.lower() not in q_clean.lower():
-            q_clean = f'{arch_clean} {q_clean}'.strip()
-    cache_key_raw = json.dumps({'m': mod_clean, 't': type_clean, 'a': arch_clean, 's': sort_clean, 'p': period_clean, 'd': domains, 'q': q_clean, 'l': int(limit), 'ver': 'v28'}, sort_keys=True)
+    q_resolved = _resolve_civitai_search_query_and_model_id(query_text=query_text, base_arch=base_arch)
+    q_clean = q_resolved['query']
+    arch_clean = q_resolved['arch_clean']
+    native_base_model = q_resolved['native_base_model']
+    direct_model_id = q_resolved['direct_model_id']
+    cache_key_raw = json.dumps({'m': mod_clean, 't': type_clean, 'a': arch_clean, 'bm': native_base_model, 'id': direct_model_id, 'nsfw': allow_nsfw_catalog, 's': sort_clean, 'p': period_clean, 'd': domains, 'q': q_clean, 'l': int(limit), 'ver': 'v29'}, sort_keys=True)
     q_hash = hashlib.sha256(cache_key_raw.encode('utf-8')).hexdigest()[:20]
-    q_cache_file = get_civitai_cache_dir() / 'queries' / f'query_v28_{q_hash}.json'
+    q_cache_file = get_civitai_cache_dir() / 'queries' / f'query_v29_{q_hash}.json'
     if not force_refresh and q_cache_file.exists():
         try:
             if time.time() - q_cache_file.stat().st_mtime < CACHE_TTL_SECONDS:
@@ -2014,28 +2092,49 @@ def query_civitai_catalog(modality: str='IMAGE', asset_type: str='LORA', base_ar
                     return cached_payload
         except Exception:
             pass
-    api_key = load_civitai_api_key()
     aggregated_items = []
-    for dom in domains:
-        params = {'limit': str(min(25, max(4, int(limit)))), 'types': type_clean, 'sort': sort_clean, 'period': period_clean, 'nsfw': 'true' if dom == 'civitai.red' and lic['licensed'] else 'false'}
-        if q_clean:
-            params['query'] = q_clean
-        url = f'https://{dom}/api/v1/models?{urllib.parse.urlencode(params)}'
-        headers = {'User-Agent': 'EZ-Cinematrix-Studio/2.8', 'Accept': 'application/json'}
-        if api_key:
-            headers['Authorization'] = f'Bearer {api_key}'
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=12) as resp:
-                raw_json = json.loads(resp.read().decode('utf-8', errors='ignore'))
-            for item in raw_json.get('items') or []:
-                if not isinstance(item, dict):
-                    continue
-                parsed_item = _parse_civitai_model_item(item, dom=dom, mod_clean=mod_clean, arch_clean=arch_clean, type_clean=type_clean, force_refresh=force_refresh)
-                if parsed_item:
-                    aggregated_items.append(parsed_item)
-        except Exception:
-            continue
+    seen_model_ids = set()
+    if direct_model_id:
+        direct_res = fetch_civitai_model_details(direct_model_id, domain=domains[0], modality=mod_clean)
+        if isinstance(direct_res, dict) and direct_res.get('status') == 'ok' and isinstance(direct_res.get('item'), dict):
+            d_item = direct_res['item']
+            aggregated_items.append(d_item)
+            if d_item.get('id') is not None:
+                seen_model_ids.add(str(d_item.get('id')))
+    if q_clean or not direct_model_id:
+        for dom in domains:
+            params = {
+                'limit': str(min(25, max(4, int(limit)))),
+                'types': type_clean,
+                'sort': sort_clean,
+                'period': period_clean,
+                'nsfw': 'true' if allow_nsfw_catalog else 'false',
+            }
+            if q_clean:
+                params['query'] = q_clean
+            if native_base_model and not q_clean:
+                params['baseModels'] = native_base_model
+            url = f'https://{dom}/api/v1/models?{urllib.parse.urlencode(params)}'
+            headers = {'User-Agent': 'EZ-Cinematrix-Studio/2.8', 'Accept': 'application/json'}
+            if api_key:
+                headers['Authorization'] = f'Bearer {api_key}'
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    raw_json = json.loads(resp.read().decode('utf-8', errors='ignore'))
+                for item in raw_json.get('items') or []:
+                    if not isinstance(item, dict):
+                        continue
+                    item_id_str = str(item.get('id', '') or '')
+                    if item_id_str and item_id_str in seen_model_ids:
+                        continue
+                    parsed_item = _parse_civitai_model_item(item, dom=dom, mod_clean=mod_clean, arch_clean=arch_clean, type_clean=type_clean, force_refresh=force_refresh)
+                    if parsed_item:
+                        if item_id_str:
+                            seen_model_ids.add(item_id_str)
+                        aggregated_items.append(parsed_item)
+            except Exception:
+                continue
     result_payload = {'status': 'ok', 'from_cache': False, 'modality': mod_clean, 'sort': sort_clean, 'period': period_clean, 'domains_queried': domains, 'domain_notice': domain_notice, 'license': lic, 'items': aggregated_items}
     if aggregated_items:
         try:

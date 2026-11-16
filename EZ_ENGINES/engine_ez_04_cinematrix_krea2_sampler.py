@@ -1677,6 +1677,10 @@ def _resolve_pipeline_video_model_metadata(bus: dict = None) -> dict:
     b = dict(bus) if isinstance(bus, dict) else {}
     vm_spec = b.get('civitai_video_model_spec') if isinstance(b.get('civitai_video_model_spec'), dict) else {}
     vl_spec = b.get('civitai_video_lora_spec') if isinstance(b.get('civitai_video_lora_spec'), dict) else {}
+    spec_clean_vloras = [
+        list(it) for it in (vl_spec.get('video_loras') or [])
+        if isinstance(it, (list, tuple)) and len(it) >= 2 and str(it[0] or '').strip() not in ('', 'None')
+    ]
     out = {
         'active_video_unet': str(b.get('active_video_unet') or b.get('video_unet_fl2va') or vm_spec.get('video_unet_fl2va') or '').strip(),
         'video_unet_fl2va': str(b.get('video_unet_fl2va') or b.get('active_video_unet') or vm_spec.get('video_unet_fl2va') or '').strip(),
@@ -1684,7 +1688,7 @@ def _resolve_pipeline_video_model_metadata(bus: dict = None) -> dict:
         'video_clip_name': str(b.get('video_clip_name') or vm_spec.get('video_clip_name') or '').strip(),
         'video_vae_name': str(b.get('video_vae_name') or vm_spec.get('video_vae_name') or '').strip(),
         'audio_vae_name': str(b.get('audio_vae_name') or vm_spec.get('audio_vae_name') or '').strip(),
-        'active_video_loras': list(b.get('active_video_loras') or vl_spec.get('video_loras') or []),
+        'active_video_loras': list(b.get('active_video_loras') or []),
         'video_turbo_lora': str(b.get('video_turbo_lora') or vl_spec.get('video_turbo_lora') or '').strip(),
     }
     try:
@@ -1711,6 +1715,7 @@ def _resolve_pipeline_video_model_metadata(bus: dict = None) -> dict:
                     c_type = str(n_def.get('class_type', ''))
                     n_in = n_def.get('inputs') if isinstance(n_def.get('inputs'), dict) else {}
                     if 'EZ_05' in c_type or 'VideoLoraStack' in c_type or 'VideoLoader' in c_type:
+                        hub_mode_05 = str(n_in.get('remote_hub_mode', 'local_priority') or 'local_priority').strip().lower()
                         for fk in ('video_unet_fl2va', 'video_unet_ref2va', 'video_clip_name', 'video_vae_name', 'audio_vae_name'):
                             val_s = n_in.get(fk)
                             if isinstance(val_s, str) and val_s.strip() and val_s.strip() != 'None':
@@ -1720,19 +1725,20 @@ def _resolve_pipeline_video_model_metadata(bus: dict = None) -> dict:
                         t_lora = n_in.get('video_turbo_lora_LOCKED')
                         if isinstance(t_lora, str) and t_lora.strip() and bool(n_in.get('enable_video_turbo_lora', True)):
                             out['video_turbo_lora'] = t_lora.strip()
-                        if not out['active_video_loras']:
-                            g_loras = []
-                            for idx_l in range(1, 5):
-                                l_name = n_in.get(f'video_lora_{idx_l}')
-                                l_en = bool(n_in.get(f'enable_video_lora_{idx_l}', True))
-                                if l_en and isinstance(l_name, str) and l_name.strip() not in ('', 'None'):
-                                    g_loras.append([
-                                        l_name.strip(),
-                                        float(n_in.get(f'lora_{idx_l}_video_strength', 0.5) or 0.0),
-                                        float(n_in.get(f'lora_{idx_l}_audio_strength', 0.0) or 0.0),
-                                    ])
-                            if g_loras:
-                                out['active_video_loras'] = g_loras
+                        g_loras = []
+                        for idx_l in range(1, 5):
+                            l_name = n_in.get(f'video_lora_{idx_l}')
+                            l_en = bool(n_in.get(f'enable_video_lora_{idx_l}', True))
+                            if l_en and isinstance(l_name, str) and l_name.strip() not in ('', 'None'):
+                                g_loras.append([
+                                    l_name.strip(),
+                                    float(n_in.get(f'lora_{idx_l}_video_strength', 0.5) or 0.0),
+                                    float(n_in.get(f'lora_{idx_l}_audio_strength', 0.0) or 0.0),
+                                ])
+                        if g_loras and (not hub_mode_05.startswith('hub_override') or not spec_clean_vloras):
+                            out['active_video_loras'] = g_loras
+                        elif not out['active_video_loras'] and spec_clean_vloras:
+                            out['active_video_loras'] = spec_clean_vloras
                     elif ('EZ_10' in c_type or 'CivitAI' in c_type) and (not out['active_video_unet'] or out['active_video_unet'] == 'None'):
                         v_u10 = n_in.get('video_unet_fl2va')
                         if isinstance(v_u10, str) and v_u10.strip() not in ('', 'None'):

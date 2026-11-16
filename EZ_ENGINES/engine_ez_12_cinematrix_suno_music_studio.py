@@ -71,10 +71,13 @@ def _resolve_ffmpeg_binary() -> str:
             parent / 'ffmpeg' / 'bin' / 'ffmpeg.exe',
             parent / 'ffmpeg.exe',
             parent / 'python_embeded' / 'Scripts' / 'ffmpeg.exe',
+            parent / 'python_embeded' / 'Library' / 'bin' / 'ffmpeg.exe',
+            parent / 'python_embedded' / 'Scripts' / 'ffmpeg.exe',
+            parent / 'python_embedded' / 'Library' / 'bin' / 'ffmpeg.exe',
         ):
             if cand.exists():
                 return str(cand)
-    return 'ffmpeg'
+    return ''
 
 
 def discover_local_audio_files() -> list:
@@ -573,39 +576,57 @@ def _decode_audio_with_pyav_fallback(
             container.close()
             return False
         a_stream = container.streams.audio[0]
-        resampler = av.AudioResampler(format='s16', layout='stereo', rate=int(target_sr))
-        max_samples = int(req_dur_sec * target_sr)
-        skip_samples = int(offset_sec * target_sr)
+        resampler = av.AudioResampler(format='fltp', layout='stereo', rate=int(target_sr))
+        max_samples = max(256, int(round(req_dur_sec * target_sr)))
+        skip_samples = max(0, int(round(offset_sec * target_sr)))
         collected = []
         total_collected = 0
         seen_samples = 0
-        for frame in container.decode(a_stream):
-            out_frames = resampler.resample(frame)
+
+        def _drain_frames(out_frames) -> bool:
+            nonlocal total_collected, seen_samples
             if not isinstance(out_frames, list):
                 out_frames = [out_frames] if out_frames is not None else []
             for of in out_frames:
-                arr = of.to_ndarray()
-                if arr.ndim == 2 and arr.shape[0] == 2 and arr.shape[1] > 2:
-                    arr = arr.T
-                elif arr.ndim == 1:
-                    arr = arr.reshape(-1, 2)
-                n_s = int(arr.shape[0])
+                arr_f = np.asarray(of.to_ndarray(), dtype=np.float32)
+                if arr_f.ndim == 2 and arr_f.shape[0] == 2:
+                    arr_f = arr_f.T
+                elif arr_f.ndim == 2 and arr_f.shape[0] == 1 and arr_f.shape[1] % 2 == 0:
+                    arr_f = arr_f.reshape(-1, 2)
+                elif arr_f.ndim == 1:
+                    arr_f = arr_f.reshape(-1, 2) if arr_f.size % 2 == 0 else np.stack([arr_f, arr_f], axis=-1)
+                elif arr_f.ndim != 2 or arr_f.shape[1] != 2:
+                    flat = arr_f.reshape(-1)
+                    pair_n = (flat.size // 2) * 2
+                    if pair_n < 2:
+                        continue
+                    arr_f = flat[:pair_n].reshape(-1, 2)
+                n_s = int(arr_f.shape[0])
                 if seen_samples + n_s <= skip_samples:
                     seen_samples += n_s
                     continue
                 if seen_samples < skip_samples:
                     cut = skip_samples - seen_samples
-                    arr = arr[cut:]
+                    arr_f = arr_f[cut:]
                     seen_samples = skip_samples
                 need = max_samples - total_collected
-                if arr.shape[0] > need:
-                    arr = arr[:need]
-                collected.append(arr.astype(np.int16))
-                total_collected += int(arr.shape[0])
+                if arr_f.shape[0] > need:
+                    arr_f = arr_f[:need]
+                arr_i16 = np.clip(np.nan_to_num(arr_f, nan=0.0, posinf=1.0, neginf=-1.0) * 32767.0, -32768.0, 32767.0).astype(np.int16)
+                collected.append(arr_i16)
+                total_collected += int(arr_i16.shape[0])
                 if total_collected >= max_samples:
-                    break
-            if total_collected >= max_samples:
+                    return True
+            return False
+
+        for frame in container.decode(a_stream):
+            if _drain_frames(resampler.resample(frame)):
                 break
+        if total_collected < max_samples:
+            try:
+                _drain_frames(resampler.resample(None))
+            except Exception:
+                pass
         container.close()
         if not collected or total_collected < 256:
             return False
@@ -617,7 +638,8 @@ def _decode_audio_with_pyav_fallback(
             wf.setframerate(int(target_sr))
             wf.writeframes(pcm.tobytes())
         return out_wav.exists() and out_wav.stat().st_size > 1024
-    except Exception:
+    except Exception as pyav_exc:
+        print(f'[EZ-12-SUNO] ⚠️ PyAV ljudavkodning avbröts för {source_path}: {pyav_exc}')
         return False
 
 
@@ -637,28 +659,30 @@ def _decode_and_slice_audio_to_wav(
     master_wav = temp_dir / f'ez_suno_master_{sig}.wav'
     vae_wav = temp_dir / f'ez_suno_32k_{sig}.wav'
     if source_path and source_path.exists() and source_path.is_file():
-        try:
-            cmd_master = [
-                ffmpeg_bin, '-y', '-i', str(source_path),
-                '-ss', f'{offset:.3f}', '-t', f'{req_dur:.3f}',
-                '-vn', '-ac', '2', '-ar', '48000',
-                '-c:a', 'pcm_s16le', str(master_wav),
-            ]
-            subprocess.run(cmd_master, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            cmd_32k = [
-                ffmpeg_bin, '-y', '-i', str(source_path),
-                '-ss', f'{offset:.3f}', '-t', f'{req_dur:.3f}',
-                '-vn', '-ac', '2', '-ar', '32000',
-                '-c:a', 'pcm_s16le', str(vae_wav),
-            ]
-            subprocess.run(cmd_32k, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        except Exception:
-            pass
+        if ffmpeg_bin:
+            try:
+                cmd_master = [
+                    ffmpeg_bin, '-y', '-i', str(source_path),
+                    '-ss', f'{offset:.3f}', '-t', f'{req_dur:.3f}',
+                    '-vn', '-ac', '2', '-ar', '48000',
+                    '-c:a', 'pcm_s16le', str(master_wav),
+                ]
+                subprocess.run(cmd_master, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                cmd_32k = [
+                    ffmpeg_bin, '-y', '-i', str(source_path),
+                    '-ss', f'{offset:.3f}', '-t', f'{req_dur:.3f}',
+                    '-vn', '-ac', '2', '-ar', '32000',
+                    '-c:a', 'pcm_s16le', str(vae_wav),
+                ]
+                subprocess.run(cmd_32k, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            except Exception:
+                pass
         if not master_wav.exists() or master_wav.stat().st_size < 1024:
             _decode_audio_with_pyav_fallback(source_path, master_wav, offset, req_dur, target_sr=48000)
         if not vae_wav.exists() or vae_wav.stat().st_size < 1024:
             _decode_audio_with_pyav_fallback(source_path, vae_wav, offset, req_dur, target_sr=32000)
     if not master_wav.exists() or master_wav.stat().st_size < 1024:
+        print(f'[EZ-12-SUNO] ⚠️ Kunde inte avkoda ljudfil {source_path} — faller tillbaka på tyst WAV.')
         _write_silent_pcm_wav(master_wav, req_dur, sr=48000)
     if not vae_wav.exists() or vae_wav.stat().st_size < 1024:
         _write_silent_pcm_wav(vae_wav, req_dur, sr=32000)

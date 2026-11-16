@@ -21,9 +21,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 -------------------------------------------------------------------------------
-OPEN-CORE COMMERCIAL ADDENDUM (OPTIONAL PRO v3.5 VAULT ASSETS):
-All Python custom node source files in the Freemium v1.0 repository are 100%
-open-source under the MIT License above. Optional encrypted PRO v3.5 add-on
-files ("allan_ballan_core.enc" and "signature.enc", distributed separately by
-Nordic Quantum Labs at https://nordicquantumlabs.lemonsqueezy.com) are
-proprietary commercial assets and are NOT covered by the MIT License.
+OPEN-CORE COMMERCIAL ADDENDUM (STANDALONE PRO v3.5+ EDITION):
+All Python custom node source files in the Freemium repository are 100%
+open-source under the MIT License above. The standalone EZ Cinematrix PRO
+edition (compiled ".ezbin" modules, "allan_ballan_core.enc", and "signature.enc",
+distributed separately by Nordic Quantum Labs at https://nordicquantumlabs.com) is
+proprietary commercial software and is NOT covered by the MIT License.

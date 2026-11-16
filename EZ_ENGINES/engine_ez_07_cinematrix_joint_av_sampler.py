@@ -290,7 +290,7 @@ def _stabilize_3d_video_latent_outliers(
             out_list.append(t)
     return _repack_av_tensors(win_obj, out_list)
 
-def _blend_and_cat_av_windows(accum_obj, win_obj, overlap_t: int, cur_len: int, temporal_rigidity: float=0.85):
+def _blend_and_cat_av_windows(accum_obj, win_obj, overlap_t: int, cur_len: int, temporal_rigidity: float=0.85, is_scene_cut: bool=False):
     import math
     a_list = _unpack_av_tensors(accum_obj)
     w_list = _unpack_av_tensors(win_obj)
@@ -302,7 +302,9 @@ def _blend_and_cat_av_windows(accum_obj, win_obj, overlap_t: int, cur_len: int, 
             continue
         if a_t.ndim == 5 and w_t.ndim == 5:
             ov = min(int(overlap_t), int(a_t.shape[2]) - 1, int(w_t.shape[2]) - 1)
-            if ov >= 1:
+            if ov >= 1 and is_scene_cut:
+                merged.append(torch.cat([a_t[:, :, :-ov, :, :], w_t], dim=2))
+            elif ov >= 1:
                 lin_v = torch.linspace(0.0, 1.0, steps=ov, dtype=torch.float32, device=w_t.device)
                 alpha_v = ((0.5 - 0.5 * torch.cos(lin_v * math.pi)) * (1.0 - 0.18 * rig)).to(dtype=w_t.dtype).reshape(1, 1, ov, 1, 1)
                 a_head = a_t[:, :, :-ov, :, :]
@@ -579,7 +581,7 @@ def _install_sage_attention_oom_guard(model=None):
     except Exception:
         pass
 
-def _decode_handoff_frame_from_accum(accumulated_cpu, video_vae, overlap_t: int=1, tile_sz: int=512, master_first_frame=None, seg_pixel_frames: int=481, anatomical_zones: dict=None, allow_camera_movement: bool=False, pro_focus_seam_active: bool=True):
+def _decode_handoff_frame_from_accum(accumulated_cpu, video_vae, overlap_t: int=1, tile_sz: int=512, master_first_frame=None, seg_pixel_frames: int=481, anatomical_zones: dict=None, allow_camera_movement: bool=False, pro_focus_seam_active: bool=True, continuity_mode: str='locked_stage_environment'):
     if accumulated_cpu is None or video_vae is None:
         return None
     try:
@@ -639,8 +641,13 @@ def _decode_handoff_frame_from_accum(accumulated_cpu, video_vae, overlap_t: int=
                         mf_aligned = mf_raw
                 except Exception:
                     mf_aligned = None
+            cont_mode_norm = str(continuity_mode or 'locked_stage_environment').strip().lower()
             w0_anchor = anatomical_zones.get('_ez_w0_rgb_anchor') if isinstance(anatomical_zones, dict) else None
-            ref_src = w0_anchor if (isinstance(w0_anchor, torch.Tensor) and w0_anchor.ndim == 4 and w0_anchor.numel() > 16) else mf_aligned
+            prev_anchor = anatomical_zones.get('_ez_prev_rgb_anchor') if isinstance(anatomical_zones, dict) else None
+            if cont_mode_norm == 'continuous_one_shot' and isinstance(prev_anchor, torch.Tensor) and prev_anchor.ndim == 4 and prev_anchor.numel() > 16:
+                ref_src = prev_anchor
+            else:
+                ref_src = w0_anchor if (isinstance(w0_anchor, torch.Tensor) and w0_anchor.ndim == 4 and w0_anchor.numel() > 16) else mf_aligned
             if isinstance(ref_src, torch.Tensor):
                 try:
                     import torch.nn.functional as F
@@ -670,13 +677,20 @@ def _decode_handoff_frame_from_accum(accumulated_cpu, video_vae, overlap_t: int=
                         r_lf_std = torch.clamp(r_lf.std(dim=(2, 3), keepdim=True), min=1e-04)
                         lf_gain = torch.clamp(r_lf_std / d_lf_std, 0.74, 1.01)
                         mean_gap = float((d_lf_mean - r_lf_mean).abs().mean().item())
-                        mean_blend = 0.48 if (isinstance(w0_anchor, torch.Tensor) or mean_gap <= 0.11) else 0.10
+                        if cont_mode_norm == 'continuous_one_shot':
+                            mean_blend = 0.14 if mean_gap <= 0.18 else 0.06
+                            lf_gain_blend = 0.32
+                        else:
+                            mean_blend = 0.48 if (isinstance(w0_anchor, torch.Tensor) or mean_gap <= 0.11) else 0.10
+                            lf_gain_blend = 0.72
                         eff_lf_mean = torch.lerp(d_lf_mean, r_lf_mean, mean_blend)
-                        d_lf_damped = (d_lf - d_lf_mean) * torch.lerp(torch.ones_like(lf_gain), lf_gain, 0.72) + eff_lf_mean
+                        d_lf_damped = (d_lf - d_lf_mean) * torch.lerp(torch.ones_like(lf_gain), lf_gain, lf_gain_blend) + eff_lf_mean
                         rebuilt = torch.clamp(d_lf_damped + d_hf_damped, 0.0, 1.0).permute(0, 2, 3, 1)
                         dec[:, :, :, :3] = rebuilt
                 except Exception:
                     pass
+            if isinstance(anatomical_zones, dict):
+                anatomical_zones['_ez_prev_rgb_anchor'] = dec[:, :, :, :3].detach().cpu().clone()
             comfy.model_management.soft_empty_cache()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -686,7 +700,7 @@ def _decode_handoff_frame_from_accum(accumulated_cpu, video_vae, overlap_t: int=
         return None
     return None
 
-def _rebuild_window_h3_conditioning(cont_ctx: dict, handoff_img, cur_len: int, t_start: int, total_t: int):
+def _rebuild_window_h3_conditioning(cont_ctx: dict, handoff_img, cur_len: int, t_start: int, total_t: int, is_editorial_scenecut: bool=False):
     if not isinstance(cont_ctx, dict):
         return (None, None, None, None)
     video_clip = cont_ctx.get('video_clip')
@@ -703,6 +717,7 @@ def _rebuild_window_h3_conditioning(cont_ctx: dict, handoff_img, cur_len: int, t
         w = max(64, int(round(float(cont_ctx.get('width', 736) or 736) / 32.0) * 32))
         h = max(64, int(round(float(cont_ctx.get('height', 512) or 512) / 32.0) * 32))
         prod_mode = str(cont_ctx.get('production_mode', 'I2VA') or 'I2VA')
+        cont_mode_win = str(cont_ctx.get('resolved_scene_continuity_mode', 'locked_stage_environment') or 'locked_stage_environment').strip().lower()
         act_list = cont_ctx.get('act_prompts') if isinstance(cont_ctx.get('act_prompts'), list) else []
         if act_list and int(t_start) < len(act_list):
             act_str = str(act_list[max(0, int(t_start))] or '').strip()
@@ -711,7 +726,7 @@ def _rebuild_window_h3_conditioning(cont_ctx: dict, handoff_img, cur_len: int, t
         else:
             act_str = str(cont_ctx.get('timeline_prompt', '') or '').strip()
         frame_in = None
-        if isinstance(handoff_img, torch.Tensor) and handoff_img.ndim == 4:
+        if (not is_editorial_scenecut) and isinstance(handoff_img, torch.Tensor) and handoff_img.ndim == 4:
             nchw_all = handoff_img[-1:, :, :, :3].movedim(-1, 1)
             frame_in = comfy.utils.common_upscale(nchw_all, w, h, 'lanczos', 'center').movedim(1, -1).detach().cpu()
         master_kf_in = cont_ctx.get('first_frame_in')
@@ -733,9 +748,9 @@ def _rebuild_window_h3_conditioning(cont_ctx: dict, handoff_img, cur_len: int, t
                 nchw_r2 = r2_in[-1:, :, :, :3].movedim(-1, 1)
                 r2_scaled = comfy.utils.common_upscale(nchw_r2, w, h, 'lanczos', 'center').movedim(1, -1).detach().cpu()
                 master_kf_in = r2_scaled
-                if is_pro_cut or frame_in is None:
+                if (not is_editorial_scenecut) and (is_pro_cut or frame_in is None):
                     frame_in = r2_scaled
-            elif cur_sp_id == 0 and is_pro_cut and isinstance(master_kf_in, torch.Tensor):
+            elif cur_sp_id == 0 and is_pro_cut and (not is_editorial_scenecut) and isinstance(master_kf_in, torch.Tensor):
                 frame_in = master_kf_in
         pre_cache = cont_ctx.get('pre_encoded_clip_cache') if isinstance(cont_ctx.get('pre_encoded_clip_cache'), dict) else {}
 
@@ -754,23 +769,38 @@ def _rebuild_window_h3_conditioning(cont_ctx: dict, handoff_img, cur_len: int, t
                 key_str = str(text or '').strip()
                 self._last_key_str = key_str
                 win_act_key = f'__EZ_WIN_ACT_{max(0, int(t_start))}__'
-                if key_str in self._cache:
+                if (not is_editorial_scenecut) and cont_mode_win == 'locked_stage_environment' and key_str in self._cache:
                     self._pending_cache_key = None
                     return {'__ez_cached_key__': key_str}
                 if key_str == act_str or (act_str and act_str in key_str):
-                    cand_keys = (win_act_key, act_str, '__EZ_WIN_ACT_0__', '__EZ_MASTER_KF_COND__')
+                    if cont_mode_win == 'locked_stage_environment' and (not is_editorial_scenecut):
+                        cand_keys = (win_act_key, act_str, '__EZ_WIN_ACT_0__', '__EZ_MASTER_KF_COND__')
+                    elif not is_editorial_scenecut:
+                        cand_keys = (f'{win_act_key}_rolling',)
+                    else:
+                        cand_keys = (f'{win_act_key}_scenecut',)
                     for fallback_k in cand_keys:
                         if fallback_k in self._cache:
                             self._pending_cache_key = None
                             return {'__ez_cached_key__': fallback_k}
                 tok_kw = dict(kwargs)
                 has_img = any((k in tok_kw and tok_kw[k] is not None for k in ('images', 'image', 'vl_images')))
-                if has_img and self._master_kf is not None and not prod_mode.startswith('REF2VA'):
-                    for img_k in ('images', 'image', 'vl_images'):
-                        if img_k in tok_kw and tok_kw[img_k] is not None:
-                            tok_kw[img_k] = [self._master_kf] if isinstance(tok_kw[img_k], (list, tuple)) else self._master_kf
+                if has_img and (not prod_mode.startswith('REF2VA')) and (not is_editorial_scenecut):
+                    target_vl_img = self._handoff_kf if (cont_mode_win == 'continuous_one_shot' and self._handoff_kf is not None) else self._master_kf
+                    if target_vl_img is not None:
+                        for img_k in ('images', 'image', 'vl_images'):
+                            if img_k in tok_kw and tok_kw[img_k] is not None:
+                                tok_kw[img_k] = [target_vl_img] if isinstance(tok_kw[img_k], (list, tuple)) else target_vl_img
                 self._last_tok_kwargs = dict(tok_kw)
-                self._pending_cache_key = win_act_key if (key_str == act_str or (act_str and act_str in key_str)) else key_str
+                if key_str == act_str or (act_str and act_str in key_str):
+                    if is_editorial_scenecut:
+                        self._pending_cache_key = f'{win_act_key}_scenecut'
+                    elif cont_mode_win != 'locked_stage_environment':
+                        self._pending_cache_key = f'{win_act_key}_rolling'
+                    else:
+                        self._pending_cache_key = win_act_key
+                else:
+                    self._pending_cache_key = key_str
                 return self._real.tokenize(text, **tok_kw)
 
             def encode_from_tokens_scheduled(self, tokens, **kwargs):
@@ -790,9 +820,9 @@ def _rebuild_window_h3_conditioning(cont_ctx: dict, handoff_img, cur_len: int, t
                 if self._pending_cache_key and isinstance(encoded_res, list):
                     cpu_cached = [[it[0].detach().cpu() if isinstance(it[0], torch.Tensor) else it[0], {mk: _offload_completed_chunk_to_cpu(mv) for (mk, mv) in (it[1].items() if isinstance(it[1], dict) else [])}] if isinstance(it, (list, tuple)) and len(it) >= 2 else it for it in encoded_res]
                     self._cache[self._pending_cache_key] = cpu_cached
-                    if int(t_start) <= 0 and self._last_key_str:
+                    if int(t_start) <= 0 and cont_mode_win == 'locked_stage_environment' and self._last_key_str:
                         self._cache[self._last_key_str] = cpu_cached
-                    if int(t_start) <= 0 and (self._last_key_str == act_str or (act_str and act_str in str(self._last_key_str or ''))):
+                    if int(t_start) <= 0 and cont_mode_win == 'locked_stage_environment' and (self._last_key_str == act_str or (act_str and act_str in str(self._last_key_str or ''))):
                         self._cache['__EZ_MASTER_KF_COND__'] = cpu_cached
                         self._cache['__EZ_WIN_ACT_0__'] = cpu_cached
                         if len(act_list) >= 2:
@@ -860,9 +890,9 @@ def _rebuild_window_h3_conditioning(cont_ctx: dict, handoff_img, cur_len: int, t
             total_wins=int(total_t),
             handoff_img=frame_in if frame_in is not None else master_kf_in,
         )
-        has_explicit_fl2va_end = bool(cont_ctx.get('has_explicit_fl2va_end', False))
-        eff_start_in = frame_in if frame_in is not None else (win_start_kf if win_start_kf is not None else master_kf_in)
-        use_dual_anchor_win = bool(has_explicit_fl2va_end)
+        has_explicit_fl2va_end = bool(cont_ctx.get('has_explicit_fl2va_end', False)) and (not is_editorial_scenecut)
+        eff_start_in = None if is_editorial_scenecut else (frame_in if frame_in is not None else (win_start_kf if win_start_kf is not None else master_kf_in))
+        use_dual_anchor_win = bool(has_explicit_fl2va_end) and (not is_editorial_scenecut)
         eff_end_in = (win_end_kf if win_end_kf is not None else (master_kf_in if master_kf_in is not None else eff_start_in)) if (eff_start_in is not None and use_dual_anchor_win) else None
         if video_arch in ('wan22', 'wan21'):
             import comfy_extras.nodes_wan as nodes_wan
@@ -887,20 +917,51 @@ def _rebuild_window_h3_conditioning(cont_ctx: dict, handoff_img, cur_len: int, t
                 return (wan_res[0], wan_res[1], _offload_completed_chunk_to_cpu(w_d['samples']), w_d.get('noise_mask'))
         from comfy_extras.nodes_minimax_h3 import MiniMaxH3ImageToVideo
         h3_res = None
-        if prod_mode.startswith('REF2VA') and audio_vae is not None:
+        used_fallback_kf_for_cut = False
+        can_use_ref2va_cut = is_editorial_scenecut and (cont_ctx.get('video_model_ref2va') is not None or prod_mode.startswith('REF2VA')) and (audio_vae is not None)
+        if (prod_mode.startswith('REF2VA') or can_use_ref2va_cut) and audio_vae is not None:
             try:
                 from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo
-                ref_list = [im for im in (eff_start_in, r2_in if r2_in is not None else master_kf_in, r3_in, r4_in) if isinstance(im, torch.Tensor) and im.ndim == 4]
+                def _norm_ref_hw(im_t):
+                    if not isinstance(im_t, torch.Tensor) or im_t.ndim != 4:
+                        return None
+                    if int(im_t.shape[1]) == h and int(im_t.shape[2]) == w and int(im_t.shape[3]) == 3:
+                        return im_t[-1:, :, :, :3].detach().cpu()
+                    nchw_r = im_t[-1:, :, :, :3].movedim(-1, 1)
+                    return comfy.utils.common_upscale(nchw_r, w, h, 'lanczos', 'center').movedim(1, -1).detach().cpu()
+                if is_editorial_scenecut:
+                    raw_refs = [im for im in (master_kf_in, r2_in, r3_in) if isinstance(im, torch.Tensor)]
+                else:
+                    raw_refs = [eff_start_in]
+                    if int(t_start) > 0 and isinstance(master_kf_in, torch.Tensor):
+                        raw_refs.append(master_kf_in)
+                    for extra_r in (r2_in, r3_in, r4_in):
+                        if isinstance(extra_r, torch.Tensor):
+                            raw_refs.append(extra_r)
+                ref_list = [rn for rn in (_norm_ref_hw(im) for im in raw_refs) if isinstance(rn, torch.Tensor)]
                 ref_batch = torch.cat(ref_list, dim=0) if ref_list else None
-                h3_res = MiniMaxH3ReferenceToVideo.execute(clip_proxy, video_vae, audio_vae, act_str, w, h, win_pixel_frames, 'match', ref_batch, None, None, None)
+                eff_ref_act = (f'<Picture 1> (from [Shot 1]) is fully referenced. {act_str}' if (is_editorial_scenecut and '<picture 1>' not in act_str.lower()) else act_str)
+                h3_res = MiniMaxH3ReferenceToVideo.execute(clip_proxy, video_vae, audio_vae, eff_ref_act, w, h, win_pixel_frames, 'match', ref_batch, None, None, None)
             except Exception:
                 h3_res = None
         if h3_res is None:
-            h3_res = MiniMaxH3ImageToVideo.execute(clip_proxy, video_vae, act_str, w, h, win_pixel_frames, eff_start_in, eff_end_in)
+            if is_editorial_scenecut:
+                try:
+                    h3_res = MiniMaxH3ImageToVideo.execute(clip_proxy, video_vae, act_str, w, h, win_pixel_frames, None, None)
+                except Exception:
+                    h3_res = None
+                if h3_res is None and isinstance(master_kf_in, torch.Tensor):
+                    used_fallback_kf_for_cut = True
+                    h3_res = MiniMaxH3ImageToVideo.execute(clip_proxy, video_vae, act_str, w, h, win_pixel_frames, master_kf_in, None)
+            else:
+                h3_res = MiniMaxH3ImageToVideo.execute(clip_proxy, video_vae, act_str, w, h, win_pixel_frames, eff_start_in, eff_end_in)
         pos_c = h3_res[0]
         lat_d = h3_res[1]
         lat_s = lat_d['samples'] if isinstance(lat_d, dict) and 'samples' in lat_d else lat_d
         n_mask = lat_d.get('noise_mask') if isinstance(lat_d, dict) else None
+        if used_fallback_kf_for_cut and isinstance(n_mask, torch.Tensor) and n_mask.ndim == 5 and int(n_mask.shape[2]) >= 1:
+            n_mask = n_mask.clone()
+            n_mask[:, :, 0:1, :, :] = torch.clamp(n_mask[:, :, 0:1, :, :], min=0.92)
         if isinstance(n_mask, torch.Tensor) and n_mask.ndim == 5 and int(n_mask.shape[2]) >= 3 and eff_end_in is not None:
             n_mask = n_mask.clone()
             end_min_noise = 0.28 if has_explicit_fl2va_end else 0.45
@@ -921,7 +982,7 @@ def _rebuild_window_h3_conditioning(cont_ctx: dict, handoff_img, cur_len: int, t
                 pass
         pos_meta = dict(pos_c[0][1]) if pos_c and len(pos_c[0]) > 1 and isinstance(pos_c[0][1], dict) else {}
         neg_str = str(cont_ctx.get('negative_prompt', '') or '').strip()
-        if neg_str and float(cont_ctx.get('active_cfg', 1.0)) > 1.05:
+        if neg_str and float(cont_ctx.get('active_cfg', 1.0)) > 1.001:
             raw_neg = clip_proxy.encode_from_tokens_scheduled(clip_proxy.tokenize(neg_str))
             neg_c = [[item[0], {**pos_meta, **(dict(item[1]) if len(item) > 1 and isinstance(item[1], dict) else {})}] for item in raw_neg]
         else:
@@ -1091,7 +1152,7 @@ def _attach_temporal_continuity_lock(
     allow_camera_movement: bool = False,
 ):
     has_suno_aud = isinstance(suno_audio_anchor, torch.Tensor) and suno_audio_anchor.numel() > 16
-    has_viseme = isinstance(viseme_env_win, torch.Tensor) and viseme_env_win.ndim == 2 and viseme_env_win.shape[0] >= 4
+    has_viseme = isinstance(viseme_env_win, torch.Tensor) and ((viseme_env_win.ndim == 2 and viseme_env_win.shape[0] >= 4) or (viseme_env_win.ndim == 5 and viseme_env_win.shape[1] >= 4))
     has_mocap = isinstance(mocap_deltas_win, torch.Tensor) and mocap_deltas_win.ndim == 5
     is_vocal_mode = has_suno_aud or has_viseme or str(motion_physics_mode or '').startswith('expressive_vocal')
     accum_vid = _unpack_av_tensors(accum_so_far)[0] if accum_so_far is not None else None
@@ -1172,62 +1233,89 @@ def _attach_temporal_continuity_lock(
                 if is_turbo_lock and cond_den is not None and sig_val < 0.60:
                     c_list = _unpack_av_tensors(cond_den)
                     if len(c_list) > 0 and len(d_list) > 0 and isinstance(c_list[0], torch.Tensor) and isinstance(d_list[0], torch.Tensor) and c_list[0].shape == d_list[0].shape:
-                        taper_w = min(0.88, max(0.0, (0.60 - sig_val) / 0.60) * 0.88)
-                        if taper_w > 0.02:
+                        u_turbo = max(0.0, min(1.0, (0.60 - sig_val) / 0.60))
+                        taper_w = 0.88 * (0.5 - 0.5 * math.cos(u_turbo * math.pi))
+                        if taper_w > 0.005:
                             d_list[0] = torch.lerp(d_list[0], c_list[0].to(device=d_list[0].device, dtype=d_list[0].dtype), taper_w)
                             modified = True
                 if len(d_list) > 0 and isinstance(d_list[0], torch.Tensor) and d_list[0].ndim == 5:
                     v_den = d_list[0]
                     is_h3_24c = (int(v_den.shape[1]) == 24)
-                    if not is_h3_24c:
-                        if accum_tail_cpu is not None and v_den.shape[3:] == accum_tail_cpu.shape[3:] and sig_val >= 0.05:
+                    is_ref2va_lock = str((master_lat_stats or {}).get('production_mode', '')).upper().startswith('REF2VA')
+                    single_ref_w0 = is_ref2va_lock and not bool((master_lat_stats or {}).get('has_explicit_extra_refs', False))
+                    if (not is_h3_24c) or is_ref2va_lock:
+                        f0_ramp = _smooth_c1_sigma_ramp(sig_val, 0.02, 0.14)
+                        if accum_tail_cpu is not None and v_den.shape[3:] == accum_tail_cpu.shape[3:] and f0_ramp > 0.001:
                             a_dev = accum_tail_cpu.to(device=v_den.device, dtype=v_den.dtype)
                             v_den = v_den.clone()
-                            w_f0 = 0.24 * min(1.0, max(0.20, sig_val))
+                            base_f0_gain = (0.38 * max(0.28, rig)) if (is_h3_24c and is_ref2va_lock) else 0.24
+                            w_f0 = min(0.45, base_f0_gain * min(1.0, max(0.22, sig_val))) * f0_ramp
                             v_den[:, :, 0:1, :, :] = torch.lerp(v_den[:, :, 0:1, :, :], a_dev[:, :, -1:, :, :], w_f0)
                             d_list[0] = v_den
                             modified = True
-                            if ov >= 2 and v_den.shape[2] > ov and sig_val >= 0.20:
-                                w_ov = min(0.24, (0.10 + 0.08 * min(1.0, sig_val)) * rig)
+                            ov_ramp = _smooth_c1_sigma_ramp(sig_val, 0.08, 0.28)
+                            if ov >= 2 and v_den.shape[2] > ov and ov_ramp > 0.001:
+                                w_ov = min(0.24, (0.10 + 0.08 * min(1.0, sig_val)) * rig) * ov_ramp
                                 v_den[:, :, 1:ov, :, :] = torch.lerp(v_den[:, :, 1:ov, :, :], a_dev[:, :, -ov + 1:, :, :], w_ov)
                                 d_list[0] = v_den
                                 modified = True
-                    if mocap_cpu is not None and v_den.shape[2] > 1 and sig_val >= 0.16:
+                        elif single_ref_w0 and isinstance(f0_win_cpu, torch.Tensor) and f0_win_cpu.ndim == 5 and v_den.shape[1] == f0_win_cpu.shape[1] and v_den.shape[3:] == f0_win_cpu.shape[3:]:
+                            w0_ramp = _smooth_c1_sigma_ramp(sig_val, 0.26, 0.52)
+                            if w0_ramp > 0.001:
+                                f0_dev = f0_win_cpu.to(device=v_den.device, dtype=v_den.dtype)
+                                v_den = v_den.clone()
+                                w_w0 = min(0.26, 0.24 * min(1.0, sig_val) * max(0.28, rig)) * w0_ramp
+                                v_den[:, :, 0:1, :, :] = torch.lerp(v_den[:, :, 0:1, :, :], f0_dev[:, :, 0:1, :, :], w_w0)
+                                d_list[0] = v_den
+                                modified = True
+                    mc_ramp = _smooth_c1_sigma_ramp(sig_val, 0.06, 0.24)
+                    if mocap_cpu is not None and v_den.shape[2] > 1 and mc_ramp > 0.001:
                         v_den = d_list[0].clone() if not modified else d_list[0]
                         t_mc = min(int(v_den.shape[2]) - 1, int(mocap_cpu.shape[2]))
                         if t_mc >= 1 and mocap_cpu.shape[3:] == v_den.shape[3:]:
                             mc_ch = min(int(v_den.shape[1]), int(mocap_cpu.shape[1]))
                             mc_dev = mocap_cpu[:, :mc_ch, :t_mc, :, :].to(device=v_den.device, dtype=v_den.dtype)
-                            mc_gain = (0.11 if is_h3_24c else 0.14) * m_str * min(1.0, sig_val)
+                            mc_gain = (0.11 if is_h3_24c else 0.14) * m_str * min(1.0, sig_val) * mc_ramp
                             v_den[:, :mc_ch, 1:1 + t_mc, :, :] = v_den[:, :mc_ch, 1:1 + t_mc, :, :] + mc_dev * mc_gain
                             d_list[0] = v_den
                             modified = True
-                    if vis_cpu is not None and v_den.shape[2] > 1 and sig_val >= 0.14:
-                        v_den = d_list[0].clone() if not modified else d_list[0]
-                        t_vis = min(int(v_den.shape[2]) - 1, int(vis_cpu.shape[2]) - 1)
-                        if t_vis >= 1:
-                            hl_v = int(v_den.shape[3])
-                            wl_v = int(v_den.shape[4])
-                            hy0, hx0, hy1, hx1 = head_box_norm if (isinstance(head_box_norm, (tuple, list)) and len(head_box_norm) == 4) else (0.04, 0.34, 0.32, 0.68)
-                            jy0 = max(0, min(hl_v - 1, int(round((hy0 + 0.52 * (hy1 - hy0)) * hl_v))))
-                            jy1 = max(jy0 + 1, min(hl_v, int(round((hy1 + 0.04 * (hy1 - hy0)) * hl_v))))
-                            jx0 = max(0, min(wl_v - 1, int(round((hx0 + 0.18 * (hx1 - hx0)) * wl_v))))
-                            jx1 = max(jx0 + 1, min(wl_v, int(round((hx1 - 0.18 * (hx1 - hx0)) * wl_v))))
-                            jaw_env = vis_cpu[:, 0:1, 1:1 + t_vis, :, :].to(device=v_den.device, dtype=v_den.dtype)
-                            plosive_env = (vis_cpu[:, 2:3, 1:1 + t_vis, :, :] if vis_cpu.shape[1] >= 3 else vis_cpu[:, 0:1, 1:1 + t_vis, :, :]).to(device=v_den.device, dtype=v_den.dtype)
-                            jaw_centered = (jaw_env - jaw_env.mean(dim=2, keepdim=True)) + 0.35 * (plosive_env - plosive_env.mean(dim=2, keepdim=True))
-                            f0_mouth = v_den[:, :, 0:1, jy0:jy1, jx0:jx1]
-                            mouth_slice_cur = v_den[:, :, 1:1 + t_vis, jy0:jy1, jx0:jx1]
-                            mouth_std = torch.clamp(f0_mouth.std(dim=(3, 4), keepdim=True), min=0.08, max=1.25)
-                            vis_gain = 0.22 * min(1.0, sig_val)
-                            v_den[:, :, 1:1 + t_vis, jy0:jy1, jx0:jx1] = mouth_slice_cur + jaw_centered * mouth_std * vis_gain
-                            d_list[0] = v_den
-                            modified = True
+                    vis_ramp = _smooth_c1_sigma_ramp(sig_val, 0.05, 0.22)
+                    if vis_cpu is not None and v_den.shape[2] > 1 and vis_ramp > 0.001:
+                        try:
+                            vis_5d = vis_cpu.unsqueeze(0).unsqueeze(-1).unsqueeze(-1) if vis_cpu.ndim == 2 else (vis_cpu.unsqueeze(-1).unsqueeze(-1) if vis_cpu.ndim == 3 else vis_cpu)
+                            t_vis = min(int(v_den.shape[2]) - 1, int(vis_5d.shape[2]) - 1) if vis_5d.ndim == 5 else 0
+                            if t_vis >= 1:
+                                import torch.nn.functional as F
+                                v_den = d_list[0].clone() if not modified else d_list[0]
+                                hl_v = int(v_den.shape[3])
+                                wl_v = int(v_den.shape[4])
+                                hy0, hx0, hy1, hx1 = head_box_norm if (isinstance(head_box_norm, (tuple, list)) and len(head_box_norm) == 4) else (0.04, 0.34, 0.32, 0.68)
+                                jy0 = max(0, min(hl_v - 1, int(round((hy0 + 0.52 * (hy1 - hy0)) * hl_v))))
+                                jy1 = max(jy0 + 1, min(hl_v, int(round((hy1 + 0.04 * (hy1 - hy0)) * hl_v))))
+                                jx0 = max(0, min(wl_v - 1, int(round((hx0 + 0.18 * (hx1 - hx0)) * wl_v))))
+                                jx1 = max(jx0 + 1, min(wl_v, int(round((hx1 - 0.18 * (hx1 - hx0)) * wl_v))))
+                                jaw_1d = vis_5d[:, 0:1, 1:1 + t_vis, 0, 0].float()
+                                lip_1d = (vis_5d[:, 1:2, 1:1 + t_vis, 0, 0] if vis_5d.shape[1] >= 2 else jaw_1d).float()
+                                plosive_1d = (vis_5d[:, 2:3, 1:1 + t_vis, 0, 0] if vis_5d.shape[1] >= 3 else jaw_1d).float()
+                                k_sust = min(int(jaw_1d.shape[2]), 5)
+                                sust_floor = F.avg_pool1d(F.pad(jaw_1d, (k_sust // 2, k_sust - 1 - k_sust // 2), mode='replicate'), kernel_size=k_sust, stride=1) if k_sust >= 3 else jaw_1d.mean(dim=2, keepdim=True)
+                                jaw_artic = (jaw_1d - 0.55 * sust_floor - 0.45 * jaw_1d.mean(dim=2, keepdim=True)) + 0.30 * (lip_1d - lip_1d.mean(dim=2, keepdim=True)) + 0.25 * (plosive_1d - plosive_1d.mean(dim=2, keepdim=True))
+                                jaw_soft = (0.58 * torch.tanh(jaw_artic / 0.58)).unsqueeze(-1).unsqueeze(-1).to(device=v_den.device, dtype=v_den.dtype)
+                                f0_mouth = v_den[:, :, 0:1, jy0:jy1, jx0:jx1]
+                                mouth_slice_cur = v_den[:, :, 1:1 + t_vis, jy0:jy1, jx0:jx1]
+                                mouth_std = torch.clamp(f0_mouth.std(dim=(3, 4), keepdim=True), min=0.08, max=0.95)
+                                vis_gain = 0.16 * min(1.0, sig_val) * vis_ramp
+                                v_den[:, :, 1:1 + t_vis, jy0:jy1, jx0:jx1] = mouth_slice_cur + jaw_soft * mouth_std * vis_gain
+                                d_list[0] = v_den
+                                modified = True
+                        except Exception:
+                            vis_5d = None
                 if len(d_list) > 1 and isinstance(d_list[1], torch.Tensor):
                     a_den = d_list[1]
-                    if suno_aud_cpu is not None and sig_val >= 0.005 and suno_aud_cpu.shape == a_den.shape:
+                    aud_ramp = _smooth_c1_sigma_ramp(sig_val, 0.002, 0.03)
+                    if suno_aud_cpu is not None and aud_ramp > 0.001 and suno_aud_cpu.shape == a_den.shape:
                         suno_dev = suno_aud_cpu.to(device=a_den.device, dtype=a_den.dtype)
-                        d_list[1] = torch.lerp(a_den, suno_dev, 0.98)
+                        d_list[1] = torch.lerp(a_den, suno_dev, 0.98 * aud_ramp)
                         modified = True
                 if modified:
                     return _repack_av_tensors(denoised, d_list)
@@ -1239,6 +1327,56 @@ def _attach_temporal_continuity_lock(
         return cloned_m
     except Exception:
         return model
+
+
+def _smooth_c1_sigma_ramp(sig_val: float, sig_low: float, sig_high: float) -> float:
+    if sig_val <= sig_low:
+        return 0.0
+    if sig_val >= sig_high:
+        return 1.0
+    u = (sig_val - sig_low) / max(1e-06, sig_high - sig_low)
+    return float(0.5 - 0.5 * math.cos(u * math.pi))
+
+
+def _detect_latent_solver_static_collapse(vid_5d: torch.Tensor, ref_hf_std: torch.Tensor = None) -> bool:
+    if not isinstance(vid_5d, torch.Tensor) or vid_5d.ndim != 5 or vid_5d.numel() < 64:
+        return False
+    try:
+        import torch.nn.functional as F
+        vf = vid_5d.detach().cpu().float()
+        if not bool(torch.isfinite(vf).all().item()):
+            return True
+        g_std = float(vf.std().item())
+        if g_std > 4.60 or g_std < 1e-05:
+            return True
+        extreme_frac = float((vf.abs() > 9.5).float().mean().item())
+        if extreme_frac > 0.015:
+            return True
+        b, c, t, h, w = vf.shape
+        if h < 4 or w < 4:
+            return False
+        body_v = vf[:, :, 1:, :, :] if t > 2 else vf
+        bt = int(body_v.shape[2])
+        v2d = body_v.permute(0, 2, 1, 3, 4).reshape(b * bt, c, h, w)
+        lf2d = F.avg_pool2d(F.pad(v2d, (1, 1, 1, 1), mode='reflect'), kernel_size=3, stride=1)
+        hf_5d = (v2d - lf2d).reshape(b, bt, c, h, w).permute(0, 2, 1, 3, 4)
+        cur_hf_val = float(hf_5d.std().item())
+        if isinstance(ref_hf_std, torch.Tensor) and ref_hf_std.numel() > 0:
+            ref_val = max(0.05, float(ref_hf_std.detach().cpu().float().mean().item()))
+            if cur_hf_val > max(1.65, 2.45 * ref_val):
+                return True
+        elif cur_hf_val > 2.15:
+            return True
+        if bt >= 6:
+            seg_third = max(2, bt // 3)
+            head_hf = max(0.05, float(hf_5d[:, :, :seg_third, :, :].std().item()))
+            tail_hf = float(hf_5d[:, :, -seg_third:, :, :].std().item())
+            if tail_hf > max(1.45, 2.35 * head_hf):
+                return True
+        return False
+    except Exception:
+        return False
+
 
 def _sanitize_minimax_patchify_tree(obj):
     if getattr(obj, 'is_nested', False) or hasattr(obj, 'tensors'):
@@ -1317,6 +1455,9 @@ def _sample_single_temporal_window(
         enforce_cinematrix_thermal_shield(f'MiniMax-Win{win_idx + 1}/{total_wins}-Start', force_inter_stage_pause=True)
     except Exception:
         enforce_cinematrix_thermal_shield = None
+    is_low_step_multistep = (int(steps) <= 10) and ('multistep' in str(sampler_name or '').lower())
+    eff_sampler_name = 'euler' if (int(win_idx) >= 2 and int(total_wins) >= 3 and is_low_step_multistep) else sampler_name
+    use_fp16_acc = (int(win_idx) == 0) and (not is_low_step_multistep)
     base_cb = latent_preview.prepare_callback(active_m, steps)
 
     def _ez_av_callback(step, x0, x, total_steps):
@@ -1339,12 +1480,65 @@ def _sample_single_temporal_window(
     raw_sample_fn = getattr(comfy.sample.sample, '_multigpu_original', getattr(comfy.sample.sample, '__wrapped__', comfy.sample.sample))
     try:
         if hasattr(torch.backends, 'cuda') and hasattr(torch.backends.cuda, 'matmul'):
-            torch.backends.cuda.matmul.allow_fp16_accumulation = True
-        out_w = raw_sample_fn(active_m, noise_w, steps, cfg, sampler_name, scheduler, positive, negative, latent_w, denoise=denoise, disable_noise=False, start_step=None, last_step=None, force_full_denoise=True, noise_mask=noise_mask_w, callback=_ez_av_callback, disable_pbar=disable_pbar, seed=seed)
+            torch.backends.cuda.matmul.allow_fp16_accumulation = bool(use_fp16_acc)
+        out_w = raw_sample_fn(active_m, noise_w, steps, cfg, eff_sampler_name, scheduler, positive, negative, latent_w, denoise=denoise, disable_noise=False, start_step=None, last_step=None, force_full_denoise=True, noise_mask=noise_mask_w, callback=_ez_av_callback, disable_pbar=disable_pbar, seed=seed)
+        cand_vid_w = _unpack_av_tensors(out_w)[0]
+        ref_hf_w = (master_lat_stats or {}).get('w0_hf_std') if isinstance(master_lat_stats, dict) else None
+        if _detect_latent_solver_static_collapse(cand_vid_w, ref_hf_w):
+            print(f'[EZ-SAMPLER-07] 🛡️ Solver static collapse detected in Window {win_idx + 1}/{total_wins}; re-sampling cleanly with Euler FP32...')
+            if hasattr(torch.backends, 'cuda') and hasattr(torch.backends.cuda, 'matmul'):
+                torch.backends.cuda.matmul.allow_fp16_accumulation = False
+            rescue_steps = max(int(steps), 10)
+            rescue_seed = int(seed) + 7919
+            rescue_noise = _sanitize_minimax_patchify_tree(comfy.sample.prepare_noise(latent_w, rescue_seed, None))
+            rescue_cb = latent_preview.prepare_callback(active_m, rescue_steps)
+
+            def _ez_rescue_callback(step, x0, x, total_steps):
+                if callable(rescue_cb):
+                    try:
+                        v0_r = _unpack_av_tensors(x0)[0]
+                        f4_r = v0_r[:, :, v0_r.shape[2] // 2, :, :] if isinstance(v0_r, torch.Tensor) and v0_r.ndim == 5 else v0_r
+                        rescue_cb(step, f4_r, x, total_steps)
+                    except Exception:
+                        pass
+                if step == total_steps - 1:
+                    _emit_minipyav_live_video_preview(x0, win_idx, total_wins, step + 1, total_steps)
+            out_w = raw_sample_fn(active_m, rescue_noise, rescue_steps, cfg, 'euler', scheduler, positive, negative, latent_w, denoise=denoise, disable_noise=False, start_step=None, last_step=None, force_full_denoise=True, noise_mask=noise_mask_w, callback=_ez_rescue_callback, disable_pbar=disable_pbar, seed=rescue_seed)
     finally:
         if hasattr(torch.backends, 'cuda') and hasattr(torch.backends.cuda, 'matmul'):
             torch.backends.cuda.matmul.allow_fp16_accumulation = prev_fp16_acc
     return _offload_completed_chunk_to_cpu(out_w)
+
+def resolve_preset_coupled_temporal_rigidity(
+    temporal_rigidity: float,
+    continuity_mode: str = '',
+    subject_stance_posture: str = '',
+    body_choreography_preset: str = '',
+    motion_physics_mode: str = '',
+) -> float:
+    base_rig = max(0.25, min(1.0, float(temporal_rigidity)))
+    cont_low = str(continuity_mode or '').strip().lower()
+    st_low = str(subject_stance_posture or '').strip().lower()
+    ch_low = str(body_choreography_preset or '').strip().lower()
+    ph_low = str(motion_physics_mode or '').strip().lower()
+    eff_rig = base_rig
+    if cont_low == 'continuous_one_shot':
+        eff_rig = min(eff_rig, 0.60)
+    elif cont_low == 'hollywood_multi_scene_cuts':
+        eff_rig = min(eff_rig, 0.70)
+    if (
+        any(ch_low.startswith(k) for k in ('nsfw_rhythmic_intimate', 'dance_sensual_club', 'dance_music_video', 'running_action', 'combat_heavy'))
+        or ph_low == 'hyper_kinetic_unnatural'
+    ):
+        eff_rig = min(eff_rig, 0.46)
+    elif (
+        any(ch_low.startswith(k) for k in ('nsfw_sensual_solo', 'catwalk_runway', 'combat_guard', 'story_multi_act'))
+        or any(st_low.startswith(k) for k in ('kneeling_crouching', 'sitting_', 'reclining_', 'lying_', 'nsfw_solo', 'nsfw_threesome', 'nsfw_orgy'))
+        or ph_low == 'stylized_2d_sakuga'
+    ):
+        eff_rig = min(eff_rig, 0.56)
+    return float(eff_rig)
+
 
 def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: dict, seed: int, steps: int, cfg: float, sampler_name: str, scheduler: str, denoise: float, enable_latent_2x_upscale: bool, previous_latent_opt=None, tier_profile: dict=None, anatomy_cfg: dict=None):
     if hasattr(comfy.model_management, 'throw_exception_if_processing_interrupted'):
@@ -1370,7 +1564,7 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
         steps = max(int(steps), 14)
     if float(denoise) < 0.999:
         denoise = 1.0
-    if is_turbo_run and abs(float(m_opts.get('shift_video', 5.0)) - 11.0) < 0.05 and str(m_opts.get('ez_video_arch', 'minimax_h3')) == 'minimax_h3':
+    if is_turbo_run and float(m_opts.get('shift_video', 5.0)) > 7.0 and str(m_opts.get('ez_video_arch', 'minimax_h3')) == 'minimax_h3':
         try:
             from comfy_extras.nodes_minimax_h3 import MiniMaxH3SigmaShift
             s_out = MiniMaxH3SigmaShift.execute(model, 5.0, 3.0)
@@ -1423,7 +1617,7 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
     total_t = int(primary_vid_t.shape[2]) if isinstance(primary_vid_t, torch.Tensor) and primary_vid_t.ndim == 5 else 1
     num_macro_segments = max(1, int(cont_ctx.get('num_macro_segments', 1) or 1))
     seg_pixel_frames = int(cont_ctx.get('macro_segment_frames', latent_dict.get('total_frames', 243 if is_h3_arch else 241)) or (243 if is_h3_arch else 241))
-    if float(cfg) > 1.05 and cont_ctx.get('video_clip') is not None and str(cont_ctx.get('negative_prompt', '') or '').strip():
+    if float(cfg) > 1.001 and cont_ctx.get('video_clip') is not None and str(cont_ctx.get('negative_prompt', '') or '').strip():
         try:
             if isinstance(negative, list) and len(negative) > 0 and isinstance(negative[0][0], torch.Tensor) and (float(negative[0][0].abs().max().item()) < 1e-06):
                 v_clip = cont_ctx['video_clip']
@@ -1623,6 +1817,10 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
                 cand_kf = raw_kfs0[0]['latent'].float().detach().cpu()
                 if cand_kf.ndim == 5 and float(cand_kf.abs().max().item()) > 1e-04:
                     kf_init = cand_kf[:, :, 0:1, :, :]
+        if kf_init is None and isinstance(cont_ctx, dict) and isinstance(cont_ctx.get('ref2va_w0_kf_latent'), torch.Tensor):
+            cand_r0 = cont_ctx['ref2va_w0_kf_latent'].float().detach().cpu()
+            if cand_r0.ndim == 5 and float(cand_r0.abs().max().item()) > 1e-04:
+                kf_init = cand_r0[:, :, 0:1, :, :]
         if kf_init is None and isinstance(primary_vid_t, torch.Tensor) and primary_vid_t.ndim == 5 and primary_vid_t.shape[2] >= 1:
             cand_p = primary_vid_t[:, :, 0:1, :, :].float().detach().cpu()
             if float(cand_p.abs().max().item()) > 1e-04:
@@ -1632,10 +1830,22 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
             master_lat_stats['std'] = torch.clamp(kf_init.std(dim=(2, 3, 4), keepdim=True), min=1e-04)
             master_lat_stats['master_kf_latent'] = kf_init
             master_lat_stats['prism_spec'] = _prism_extract_latent_channel_spectrum(kf_init)
+        master_lat_stats['production_mode'] = str(latent_dict.get('production_mode', (cont_ctx or {}).get('production_mode', 'I2VA')) or 'I2VA')
+        master_lat_stats['has_explicit_extra_refs'] = bool((cont_ctx or {}).get('has_explicit_extra_refs', False))
         master_lat_stats['allow_camera_movement'] = bool((cont_ctx or {}).get('allow_camera_movement', latent_dict.get('allow_camera_movement', False)))
     except Exception:
         pass
     allow_cam_global = bool((cont_ctx or {}).get('allow_camera_movement', latent_dict.get('allow_camera_movement', False)))
+    active_cont_global = str((cont_ctx or {}).get('resolved_scene_continuity_mode') or latent_dict.get('resolved_scene_continuity_mode') or 'locked_stage_environment').strip().lower()
+    stance_global = str((cont_ctx or {}).get('subject_stance_posture', latent_dict.get('subject_stance_posture', '')) or '').strip()
+    choreo_global = str((cont_ctx or {}).get('body_choreography_preset', latent_dict.get('body_choreography_preset', '')) or '').strip()
+    eff_temporal_rigidity = resolve_preset_coupled_temporal_rigidity(
+        temporal_rigidity,
+        continuity_mode=active_cont_global,
+        subject_stance_posture=stance_global,
+        body_choreography_preset=choreo_global,
+        motion_physics_mode=active_motion_mode,
+    )
     macro_segment_latents = []
     if not isinstance(primary_vid_t, torch.Tensor) or primary_vid_t.ndim != 5 or (num_macro_segments <= 1 and total_t <= (72 if is_h3_arch else 65)):
         (fixed_samples, base_noise_mask) = _inject_suno_audio_latent_conditioning(fixed_samples, base_noise_mask, seg_i=0, n_wins=1, eff_ov_t=overlap_t)
@@ -1657,7 +1867,7 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
             win_idx=0,
             total_wins=1,
             overlap_t=overlap_t,
-            temporal_rigidity=temporal_rigidity,
+            temporal_rigidity=eff_temporal_rigidity,
             suno_audio_anchor=latent_dict.get('_ez_active_suno_audio_latent'),
             master_lat_stats=master_lat_stats,
             viseme_env_win=latent_dict.get('_ez_active_viseme_envelope'),
@@ -1681,9 +1891,11 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
         stitched_accum_cpu = None
         master_kf = cont_ctx.get('first_frame_in') if cont_ctx else None
         stale_cache_detected = False
+        active_cont_mode = str((cont_ctx or {}).get('resolved_scene_continuity_mode') or latent_dict.get('resolved_scene_continuity_mode') or 'locked_stage_environment').strip().lower()
+        editorial_cut_set = set(int(x) for x in ((cont_ctx or {}).get('editorial_scenecut_indices') or latent_dict.get('editorial_scenecut_indices') or []))
         if isinstance(cont_ctx, dict):
             try:
-                from .engine_ez_06_cinematrix_video_director import _extract_chronological_shot_prompts, _scrub_sfx_vocal_triggers, _scrub_unrequested_genital_hallucinations
+                from .engine_ez_06_cinematrix_video_director import _extract_chronological_shot_prompts, extract_editorial_scenecut_window_indices, _apply_3axis_window_directives_to_acts, _scrub_sfx_vocal_triggers, _scrub_unrequested_genital_hallucinations
                 old_acts = list(cont_ctx.get('act_prompts') or [])
                 raw_src = str(cont_ctx.get('raw_timeline_prompt') or cont_ctx.get('timeline_prompt') or '').strip()
                 is_ref_mode = str(cont_ctx.get('production_mode', '')).startswith('REF2VA')
@@ -1696,39 +1908,53 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
                     or str(active_motion_mode).startswith('expressive_vocal')
                     or (isinstance(s_cfg_check, dict) and bool(s_cfg_check.get('active')) and bool(s_cfg_check.get('wants_lipsync', True)))
                 )
-                allow_cam_move_run = bool(cont_ctx.get('allow_camera_movement', latent_dict.get('allow_camera_movement', False)))
+                allow_cam_move_run = bool(cont_ctx.get('allow_camera_movement', latent_dict.get('allow_camera_movement', False))) or (active_cont_mode != 'locked_stage_environment')
                 master_lat_stats['allow_camera_movement'] = allow_cam_move_run
                 allow_cam_global = allow_cam_move_run
                 master_lat_stats['has_explicit_fl2va_end'] = bool(cont_ctx.get('has_explicit_fl2va_end', False))
                 is_nsfw_run = bool(cont_ctx.get('is_nsfw', True))
                 rating_tier_run = str(cont_ctx.get('rating_tier', 'uncensored_action' if is_nsfw_run else 'sfw') or '').strip().lower()
+                stance_run = str(cont_ctx.get('subject_stance_posture', latent_dict.get('subject_stance_posture', '')) or '').strip()
+                choreo_run = str(cont_ctx.get('body_choreography_preset', latent_dict.get('body_choreography_preset', '')) or '').strip()
+                arc_run = str(cont_ctx.get('camera_trajectory_arc', latent_dict.get('camera_trajectory_arc', '')) or '').strip()
+                if rating_tier_run != 'sfw' and (stance_run.lower().startswith('nsfw_') or choreo_run.lower().startswith('nsfw_')):
+                    rating_tier_run = 'nsfw_explicit'
                 user_scene_run = str(cont_ctx.get('user_scene_input') or raw_src).strip()
-                already_sanitized = (str(cont_ctx.get('sanitizer_version', '')) == 'v19_env_beat_multiband_lock') and bool(old_acts)
+                already_sanitized = (str(cont_ctx.get('sanitizer_version', '')) == 'v35_preset_authority_and_species_fidelity') and bool(old_acts)
                 cam_dirty_clause = '' if allow_cam_move_run else r'dolly-in|push-in|zoom-in|85mm\s+portrait|'
                 nsfw_dirty_clause = '' if is_nsfw_run else r'vulva|vagina|labia|pussy|clit|penis|cock|dick|loincloth\s+shifts|loincloth\s+parts|'
-                dirty_pat = rf'(?i)(?<!no\s)(?<!zero\s)(?<!zero\scamera\s)(?<!no\scamera\s)(?<!without\s)\b(?:{cam_dirty_clause}{nsfw_dirty_clause}hitting\s+the\s+ground|crashing\s+down|down\s+on\s+the\s+ground|away\s+from\s+her\s+abdomen|as\s+if\s+it\s+w(?:h)?ere\s+a\s+cross|above\s+her\s+head|over\s+her\s+head|at\s+6\.5s|at\s+13\.5s|Act\s*1\s*\(0\.0s|maintaining\s+her\s+exact\s+initial\s+stance)\b'
+                dirty_pat = rf'(?i)(?<!no\s)(?<!zero\s)(?<!zero\scamera\s)(?<!no\scamera\s)(?<!without\s)\b(?:{cam_dirty_clause}{nsfw_dirty_clause}at\s+6\.5s|at\s+13\.5s|Act\s*1\s*\(0\.0s|maintaining\s+her\s+exact\s+initial\s+stance)\b'
                 has_dirty_act = (not already_sanitized) and any((re.search(dirty_pat, str(a)) for a in old_acts))
                 if (not old_acts or not already_sanitized or has_dirty_act) and raw_src:
-                    if rating_tier_run == 'sfw':
-                        src_for_acts = _scrub_unrequested_genital_hallucinations(raw_src, '')
-                    elif rating_tier_run == 'nsfw_explicit':
-                        src_for_acts = raw_src
-                    else:
-                        src_for_acts = _scrub_unrequested_genital_hallucinations(raw_src, user_scene_run)
+                    src_for_acts = _scrub_unrequested_genital_hallucinations(raw_src, '') if rating_tier_run == 'sfw' else raw_src
                     if not is_vocal_run:
-                        src_for_acts = _scrub_sfx_vocal_triggers(src_for_acts)
-                    fresh_acts = _extract_chronological_shot_prompts(src_for_acts, num_windows=total_wins, is_ref2va=is_ref_mode, is_vocal_override=is_vocal_run, user_scene_input=user_scene_run, allow_camera_movement=allow_cam_move_run)
+                        src_for_acts = _scrub_sfx_vocal_triggers(src_for_acts, user_scene_run)
+                    fresh_acts = _extract_chronological_shot_prompts(src_for_acts, num_windows=total_wins, is_ref2va=is_ref_mode, is_vocal_override=is_vocal_run, user_scene_input=user_scene_run, allow_camera_movement=allow_cam_move_run, subject_stance_posture=stance_run, scene_continuity_mode=active_cont_mode, rating_tier=rating_tier_run)
                     if fresh_acts:
+                        editorial_cut_set = set(extract_editorial_scenecut_window_indices(fresh_acts, active_cont_mode))
+                        fresh_acts = [re.sub(r'(?i)\[\s*(?:SCENE[\s_-]*CUT|HARD[\s_-]*CUT|SMASH[\s_-]*CUT)\s*\]\s*', '', str(a or '')).strip() for a in fresh_acts]
+                        fresh_acts = _apply_3axis_window_directives_to_acts(fresh_acts, subject_stance_posture=stance_run, body_choreography_preset=choreo_run, camera_trajectory_arc=arc_run, motion_physics_mode=str(cont_ctx.get('raw_motion_physics_mode', '')), resolved_physics_mode=active_motion_mode)
                         stale_cache_detected = True
                         cont_ctx['act_prompts'] = fresh_acts
-                        cont_ctx['sanitizer_version'] = 'v19_env_beat_multiband_lock'
+                        cont_ctx['editorial_scenecut_indices'] = sorted(editorial_cut_set)
+                        cont_ctx['sanitizer_version'] = 'v35_preset_authority_and_species_fidelity'
                         cont_ctx['pre_encoded_clip_cache'] = {}
             except Exception:
                 pass
+        eff_temporal_rigidity = resolve_preset_coupled_temporal_rigidity(
+            temporal_rigidity,
+            continuity_mode=active_cont_mode,
+            subject_stance_posture=str((cont_ctx or {}).get('subject_stance_posture', stance_global) or ''),
+            body_choreography_preset=str((cont_ctx or {}).get('body_choreography_preset', choreo_global) or ''),
+            motion_physics_mode=active_motion_mode,
+        )
+        materialized_ref2va_cut_model = None
         for seg_idx in range(total_wins):
             if hasattr(comfy.model_management, 'throw_exception_if_processing_interrupted'):
                 comfy.model_management.throw_exception_if_processing_interrupted()
             eff_win_ov = overlap_t
+            is_editorial_scenecut_win = (seg_idx >= 1) and (active_cont_mode == 'hollywood_multi_scene_cuts') and (int(seg_idx) in editorial_cut_set)
+            win_active_model = model
             if seg_idx == 0:
                 if stale_cache_detected and master_kf is not None:
                     (h3_p0, h3_n0, h3_l0, h3_m0) = _rebuild_window_h3_conditioning(cont_ctx, master_kf, seg_pixel_frames, 0, total_wins)
@@ -1745,7 +1971,7 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
                 eff_win_ov = max(1, overlap_t)
                 if isinstance(cont_ctx.get('anatomical_latent_zones'), dict):
                     active_anat_zones = cont_ctx['anatomical_latent_zones']
-                allow_cam_win = bool((cont_ctx or {}).get('allow_camera_movement', latent_dict.get('allow_camera_movement', False)))
+                allow_cam_win = bool((cont_ctx or {}).get('allow_camera_movement', latent_dict.get('allow_camera_movement', False))) or (active_cont_mode != 'locked_stage_environment')
                 pro_rt = cont_ctx.get('pro_speaker_routing') if isinstance(cont_ctx.get('pro_speaker_routing'), dict) else {}
                 has_valid_2p = bool(pro_rt.get('active', False)) and bool(pro_rt.get('has_second_person_ref', False)) and isinstance(cont_ctx.get('r2_in'), torch.Tensor)
                 pro_cuts = pro_rt.get('scenecut_window_indices') if (has_valid_2p and isinstance(pro_rt.get('scenecut_window_indices'), list)) else []
@@ -1754,7 +1980,21 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
                 cur_win_sp = int(pro_sp_ids[int(seg_idx)]) if 0 <= int(seg_idx) < len(pro_sp_ids) else 0
                 eff_master_for_win = cont_ctx.get('r2_in') if (has_valid_2p and cur_win_sp == 1) else master_kf
                 pro_seam_flag = bool((cont_ctx or {}).get('pro_focus_seam_active', latent_dict.get('pro_focus_seam_active', True)))
-                if is_pro_scenecut_win and isinstance(eff_master_for_win, torch.Tensor):
+                if is_editorial_scenecut_win:
+                    handoff_img = None
+                    if isinstance(active_anat_zones, dict):
+                        active_anat_zones['_ez_handoff_reanchored'] = True
+                        active_anat_zones['_ez_handoff_trim_px'] = 0
+                    if cont_ctx.get('video_model_ref2va') is not None and cont_ctx.get('audio_vae') is not None and str(cont_ctx.get('video_arch', 'minimax_h3')).lower() == 'minimax_h3':
+                        if materialized_ref2va_cut_model is None:
+                            try:
+                                from .engine_ez_05_cinematrix_video_lora_stack import materialize_deferred_ref2va_model
+                                materialized_ref2va_cut_model = materialize_deferred_ref2va_model(cont_ctx['video_model_ref2va'])
+                            except Exception:
+                                materialized_ref2va_cut_model = cont_ctx.get('video_model_ref2va')
+                        if materialized_ref2va_cut_model is not None:
+                            win_active_model = materialized_ref2va_cut_model
+                elif is_pro_scenecut_win and isinstance(eff_master_for_win, torch.Tensor):
                     handoff_img = eff_master_for_win
                     if isinstance(active_anat_zones, dict):
                         active_anat_zones['_ez_handoff_reanchored'] = True
@@ -1772,17 +2012,17 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
                             upscale_chunk_t = max(2, int(rt_ov['upscale_chunk_t']))
                     except Exception:
                         pass
-                    handoff_img = _decode_handoff_frame_from_accum(prev_seg_cpu, cont_ctx.get('video_vae'), overlap_t=eff_win_ov, tile_sz=int(cont_ctx.get('tile_size', 512) or 512), master_first_frame=eff_master_for_win, seg_pixel_frames=seg_pixel_frames, anatomical_zones=active_anat_zones, allow_camera_movement=allow_cam_win, pro_focus_seam_active=pro_seam_flag)
-                was_reanchored = bool(is_pro_scenecut_win) or (bool(active_anat_zones.get('_ez_handoff_reanchored', False)) if isinstance(active_anat_zones, dict) else False)
-                (h3_pos, h3_neg, h3_lat, h3_mask) = _rebuild_window_h3_conditioning(cont_ctx, handoff_img if handoff_img is not None else eff_master_for_win, seg_pixel_frames, seg_idx, total_wins)
+                    handoff_img = _decode_handoff_frame_from_accum(prev_seg_cpu, cont_ctx.get('video_vae'), overlap_t=eff_win_ov, tile_sz=int(cont_ctx.get('tile_size', 512) or 512), master_first_frame=eff_master_for_win, seg_pixel_frames=seg_pixel_frames, anatomical_zones=active_anat_zones, allow_camera_movement=allow_cam_win, pro_focus_seam_active=pro_seam_flag, continuity_mode=active_cont_mode)
+                was_reanchored = bool(is_editorial_scenecut_win) or bool(is_pro_scenecut_win) or (bool(active_anat_zones.get('_ez_handoff_reanchored', False)) if isinstance(active_anat_zones, dict) else False)
+                (h3_pos, h3_neg, h3_lat, h3_mask) = _rebuild_window_h3_conditioning(cont_ctx, None if is_editorial_scenecut_win else (handoff_img if handoff_img is not None else eff_master_for_win), seg_pixel_frames, seg_idx, total_wins, is_editorial_scenecut=is_editorial_scenecut_win)
                 if isinstance(cont_ctx.get('anatomical_latent_zones'), dict):
                     active_anat_zones = cont_ctx['anatomical_latent_zones']
-                    if is_pro_scenecut_win:
+                    if is_pro_scenecut_win or is_editorial_scenecut_win:
                         active_anat_zones['_ez_handoff_reanchored'] = True
                 if h3_pos is not None and h3_neg is not None and (h3_lat is not None):
                     win_pos = h3_pos
                     win_neg = h3_neg
-                    win_lat = comfy.sample.fix_empty_latent_channels(model, h3_lat)
+                    win_lat = comfy.sample.fix_empty_latent_channels(win_active_model, h3_lat)
                     win_mask = h3_mask
                     win_vid_0 = _unpack_av_tensors(win_lat)[0]
                     seg_v_t = int(win_vid_0.shape[2]) if isinstance(win_vid_0, torch.Tensor) and win_vid_0.ndim == 5 else total_t
@@ -1801,15 +2041,15 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
                     if not was_reanchored:
                         (win_pos, win_neg) = _inject_h3_native_latent_tail_keyframes(win_pos, win_neg, prev_seg_cpu, 1, master_lat_stats=master_lat_stats, force_tail_replace=False)
                         win_lat = _inject_overlap_into_av_window(win_lat, prev_seg_cpu, eff_win_ov, seg_v_t)
-                    win_pos = _slice_conditioning_for_window(win_pos, 1, seg_v_t + 1, seg_v_t, accumulated_cpu=prev_seg_cpu, overlap_t=eff_win_ov, is_positive=True)
-                    win_neg = _slice_conditioning_for_window(win_neg, 1, seg_v_t + 1, seg_v_t, accumulated_cpu=prev_seg_cpu, overlap_t=eff_win_ov, is_positive=False)
+                    win_pos = _slice_conditioning_for_window(win_pos, 1, seg_v_t + 1, seg_v_t, accumulated_cpu=None if was_reanchored else prev_seg_cpu, overlap_t=eff_win_ov, is_positive=True)
+                    win_neg = _slice_conditioning_for_window(win_neg, 1, seg_v_t + 1, seg_v_t, accumulated_cpu=None if was_reanchored else prev_seg_cpu, overlap_t=eff_win_ov, is_positive=False)
                     if not was_reanchored:
                         win_mask = _build_av_overlap_noise_mask(win_lat, win_mask, eff_win_ov, seg_v_t)
             (win_lat, win_mask) = _inject_suno_audio_latent_conditioning(win_lat, win_mask, seg_i=seg_idx, n_wins=total_wins, eff_ov_t=eff_win_ov)
             win_seed = int(seed) + seg_idx
             win_noise = comfy.sample.prepare_noise(win_lat, win_seed, batch_inds)
             sampled_win_cpu = _sample_single_temporal_window(
-                model,
+                win_active_model,
                 win_noise,
                 steps,
                 cfg,
@@ -1824,9 +2064,9 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
                 win_seed,
                 win_idx=seg_idx,
                 total_wins=total_wins,
-                accum_so_far=prev_seg_cpu if not (seg_idx > 0 and isinstance(active_anat_zones, dict) and active_anat_zones.get('_ez_handoff_reanchored', False)) else None,
+                accum_so_far=prev_seg_cpu if not (seg_idx > 0 and (is_editorial_scenecut_win or (isinstance(active_anat_zones, dict) and active_anat_zones.get('_ez_handoff_reanchored', False)))) else None,
                 overlap_t=eff_win_ov,
-                temporal_rigidity=temporal_rigidity,
+                temporal_rigidity=eff_temporal_rigidity,
                 suno_audio_anchor=latent_dict.get('_ez_active_suno_audio_latent'),
                 master_lat_stats=master_lat_stats,
                 viseme_env_win=latent_dict.get('_ez_active_viseme_envelope'),
@@ -1856,6 +2096,8 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
                         s_head = torch.clamp(head_slice.std(dim=(2, 3, 4), keepdim=True), min=1e-04)
                         master_lat_stats['mean'] = (0.75 * m_head + 0.25 * m_all).detach().cpu()
                         master_lat_stats['std'] = (0.75 * s_head + 0.25 * s_all).detach().cpu()
+                        master_lat_stats['prev_win_mean'] = master_lat_stats['mean'].clone()
+                        master_lat_stats['prev_win_std'] = master_lat_stats['std'].clone()
                         b0, c0, t0, h0, w0 = v0_body.shape
                         v0_2d = v0_body.permute(0, 2, 1, 3, 4).reshape(b0 * t0, c0, h0, w0)
                         v0_lf = F.avg_pool2d(F.pad(v0_2d, (1, 1, 1, 1), mode='reflect'), kernel_size=3, stride=1)
@@ -1872,6 +2114,7 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
                             w0_rgb_ref = _decode_handoff_frame_from_accum(w0_mid_lat, cont_ctx.get('video_vae'), overlap_t=1, tile_sz=int(cont_ctx.get('tile_size', 512) or 512), master_first_frame=None, seg_pixel_frames=seg_pixel_frames, anatomical_zones=None)
                             if isinstance(w0_rgb_ref, torch.Tensor) and w0_rgb_ref.numel() > 16:
                                 active_anat_zones['_ez_w0_rgb_anchor'] = w0_rgb_ref.detach().cpu()
+                                active_anat_zones['_ez_prev_rgb_anchor'] = w0_rgb_ref.detach().cpu().clone()
                 except Exception:
                     pass
             elif seg_idx >= 1 and isinstance(master_lat_stats.get('w0_hf_std'), torch.Tensor):
@@ -1888,15 +2131,45 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
                         vk_hf = vk_f - vk_lf
                         cur_hf_s = torch.clamp(vk_hf[:, :, 1:, :, :].std(dim=(2, 3, 4), keepdim=True), min=1e-04)
                         ref_hf_s = master_lat_stats['w0_hf_std'].to(device=vk_f.device, dtype=torch.float32)
-                        hf_scale = torch.clamp(ref_hf_s / cur_hf_s, 0.65, 1.01)
-                        vk_damped = vk_lf + vk_hf * torch.lerp(torch.ones_like(hf_scale), hf_scale, 0.82)
-                        if isinstance(master_lat_stats.get('mean'), torch.Tensor) and isinstance(master_lat_stats.get('std'), torch.Tensor):
-                            lf_m = vk_damped[:, :, 1:, :, :].mean(dim=(2, 3, 4), keepdim=True)
-                            lf_s = torch.clamp(vk_damped[:, :, 1:, :, :].std(dim=(2, 3, 4), keepdim=True), min=1e-04)
-                            m0 = master_lat_stats['mean'].to(device=vk_f.device, dtype=torch.float32)
-                            s0 = master_lat_stats['std'].to(device=vk_f.device, dtype=torch.float32)
-                            g_scale = torch.clamp(s0 / lf_s, 0.72, 1.01)
-                            vk_damped[:, :, 1:, :, :] = (vk_damped[:, :, 1:, :, :] - lf_m) * torch.lerp(torch.ones_like(g_scale), g_scale, 0.70) + torch.lerp(lf_m, m0, 0.45)
+                        if is_editorial_scenecut_win:
+                            hf_scale = torch.clamp(ref_hf_s / cur_hf_s, 0.72, 1.12)
+                            vk_damped = vk_lf + vk_hf * torch.lerp(torch.ones_like(hf_scale), hf_scale, 0.45)
+                            cut_body = vk_damped[:, :, 1:, :, :]
+                            master_lat_stats['mean'] = cut_body.mean(dim=(2, 3, 4), keepdim=True).detach().cpu()
+                            master_lat_stats['std'] = torch.clamp(cut_body.std(dim=(2, 3, 4), keepdim=True), min=1e-04).detach().cpu()
+                            master_lat_stats['prev_win_mean'] = master_lat_stats['mean'].clone()
+                            master_lat_stats['prev_win_std'] = master_lat_stats['std'].clone()
+                            if isinstance(active_anat_zones, dict) and cont_ctx and cont_ctx.get('video_vae') is not None:
+                                mid_cut_i = min(int(vk_damped.shape[2]) - 1, max(1, int(vk_damped.shape[2]) // 3))
+                                cut_mid_lat = _repack_av_tensors(sampled_win_cpu, [vk_damped[:, :, :mid_cut_i + 1, :, :].to(dtype=orig_vk_dt)])
+                                cut_rgb_ref = _decode_handoff_frame_from_accum(cut_mid_lat, cont_ctx.get('video_vae'), overlap_t=1, tile_sz=int(cont_ctx.get('tile_size', 512) or 512), master_first_frame=None, seg_pixel_frames=seg_pixel_frames, anatomical_zones=None)
+                                if isinstance(cut_rgb_ref, torch.Tensor) and cut_rgb_ref.numel() > 16:
+                                    active_anat_zones['_ez_w0_rgb_anchor'] = cut_rgb_ref.detach().cpu()
+                                    active_anat_zones['_ez_prev_rgb_anchor'] = cut_rgb_ref.detach().cpu().clone()
+                        elif active_cont_mode == 'continuous_one_shot':
+                            hf_scale = torch.clamp(ref_hf_s / cur_hf_s, 0.80, 1.08)
+                            vk_damped = vk_lf + vk_hf * torch.lerp(torch.ones_like(hf_scale), hf_scale, 0.55)
+                            prev_m_ref = master_lat_stats.get('prev_win_mean', master_lat_stats.get('mean'))
+                            prev_s_ref = master_lat_stats.get('prev_win_std', master_lat_stats.get('std'))
+                            if isinstance(prev_m_ref, torch.Tensor) and isinstance(prev_s_ref, torch.Tensor):
+                                lf_m = vk_damped[:, :, 1:, :, :].mean(dim=(2, 3, 4), keepdim=True)
+                                lf_s = torch.clamp(vk_damped[:, :, 1:, :, :].std(dim=(2, 3, 4), keepdim=True), min=1e-04)
+                                mp = prev_m_ref.to(device=vk_f.device, dtype=torch.float32)
+                                sp = prev_s_ref.to(device=vk_f.device, dtype=torch.float32)
+                                g_scale = torch.clamp(sp / lf_s, 0.84, 1.04)
+                                vk_damped[:, :, 1:, :, :] = (vk_damped[:, :, 1:, :, :] - lf_m) * torch.lerp(torch.ones_like(g_scale), g_scale, 0.35) + torch.lerp(lf_m, mp, 0.12)
+                            master_lat_stats['prev_win_mean'] = vk_damped[:, :, 1:, :, :].mean(dim=(2, 3, 4), keepdim=True).detach().cpu()
+                            master_lat_stats['prev_win_std'] = torch.clamp(vk_damped[:, :, 1:, :, :].std(dim=(2, 3, 4), keepdim=True), min=1e-04).detach().cpu()
+                        else:
+                            hf_scale = torch.clamp(ref_hf_s / cur_hf_s, 0.84, 1.06)
+                            vk_damped = vk_lf + vk_hf * torch.lerp(torch.ones_like(hf_scale), hf_scale, 0.72)
+                            if isinstance(master_lat_stats.get('mean'), torch.Tensor) and isinstance(master_lat_stats.get('std'), torch.Tensor):
+                                lf_m = vk_damped[:, :, 1:, :, :].mean(dim=(2, 3, 4), keepdim=True)
+                                lf_s = torch.clamp(vk_damped[:, :, 1:, :, :].std(dim=(2, 3, 4), keepdim=True), min=1e-04)
+                                m0 = master_lat_stats['mean'].to(device=vk_f.device, dtype=torch.float32)
+                                s0 = master_lat_stats['std'].to(device=vk_f.device, dtype=torch.float32)
+                                g_scale = torch.clamp(s0 / lf_s, 0.72, 1.01)
+                                vk_damped[:, :, 1:, :, :] = (vk_damped[:, :, 1:, :, :] - lf_m) * torch.lerp(torch.ones_like(g_scale), g_scale, 0.70) + torch.lerp(lf_m, m0, 0.45)
                         cur_list_hf[0] = vk_damped.to(dtype=orig_vk_dt)
                         sampled_win_cpu = _repack_av_tensors(sampled_win_cpu, cur_list_hf)
                 except Exception:
@@ -1907,7 +2180,7 @@ def execute_temporal_chunked_sampling(model, positive, negative, latent_dict: di
                 stitched_accum_cpu = sampled_win_cpu
             else:
                 cur_v_len = int(_unpack_av_tensors(sampled_win_cpu)[0].shape[2])
-                stitched_accum_cpu = _blend_and_cat_av_windows(stitched_accum_cpu, sampled_win_cpu, 1 if is_h3_arch else eff_win_ov, cur_v_len, temporal_rigidity=temporal_rigidity)
+                stitched_accum_cpu = _blend_and_cat_av_windows(stitched_accum_cpu, sampled_win_cpu, 1 if is_h3_arch else eff_win_ov, cur_v_len, temporal_rigidity=eff_temporal_rigidity, is_scene_cut=bool(is_editorial_scenecut_win))
             _emit_minipyav_live_video_preview(stitched_accum_cpu if stitched_accum_cpu is not None else sampled_win_cpu, seg_idx, total_wins, steps, steps)
             del win_lat, win_noise
             if inter_window_purge or bool(prof.get('inter_window_vram_purge', False)):

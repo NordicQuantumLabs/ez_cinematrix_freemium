@@ -24,7 +24,7 @@ MASTER_DURATION_PRESETS = ['5-second', '10-second', '15-second', '20-second', '3
 STYLE_TARGET_PRESETS = ['original', 'realism', 'semi-real', 'anime', 'cartoonish', 'cinematic-film-35mm', 'unreal-engine-5', 'dark-fantasy-real', 'dark-fantasy-cgi']
 CAMERA_ZOOM_PRESETS = ['extreme-close-up', 'close-up', 'medium-close-up', 'medium-shot', 'medium-wide', 'wide-shot', 'extreme-wide-establishing']
 LIGHTING_AMBIENT_PRESETS = ['auto', 'natural-muted-cinema', 'desaturated-low-chroma', 'bleach-bypass-gritty', 'cinematic-dark', 'volumetric-day', 'neon-cyberpunk', 'golden-hour', 'moonlit-noir', 'studio-rim-light', 'overcast-soft']
-SUBJECT_AGE_PRESETS = ['18-year-old', '21-year-old', '25-year-old', '30-year-old', '35-year-old', '40-year-old', '45-year-old', '50-year-old', '60-year-old', 'ageless-cyborg']
+SUBJECT_AGE_PRESETS = ['auto_from_prompt_or_ref', '18-year-old', '21-year-old', '25-year-old', '30-year-old', '35-year-old', '40-year-old', '45-year-old', '50-year-old', '60-year-old', 'ageless-cyborg']
 AGE_DIFFERENCE_PRESETS = ['same age', '2 years younger', '2 years older', '5 years younger', '5 years older', '10 years younger', '10 years older', '15 years older', 'none (single subject)']
 CAMERA_MOVEMENT_PRESETS = [
     'locked-off tripod 50mm anamorphic master shot with shallow depth of field',
@@ -98,6 +98,126 @@ BACKGROUND_EXTRAS_CROWD_PRESETS = [
     'studio_crew_or_audience (TV-Studio / Scen / Konsert — Publik & Kamerateam i Bakgrund)',
     'intimate_group_companions (Älskog / Intim — Partner / Grupp / Harem-Sällskap)',
 ]
+SCENE_CONTINUITY_MODES = [
+    'auto_from_prompt (Auto från Prompt — Låst Scen / One-Shot Åkning / Hollywood Scenklipp)',
+    'locked_stage_environment (Låst Rum & Miljö — Samma Plats, Ljus & Scen [Musikvideo/Porträtt])',
+    'continuous_one_shot (One-Shot Lång Tagning — Obruten Kameraåkning genom Skiftande Miljöer)',
+    'hollywood_multi_scene_cuts (Hollywood Multi-Scene Cuts — Äkta Filmklipp mellan Akter & Miljöer)',
+]
+
+
+def resolve_scene_continuity_mode(
+    scene_continuity_mode: str = '',
+    user_scene_input: str = '',
+    subject_stance_posture: str = '',
+    body_choreography_preset: str = '',
+    camera_trajectory_arc: str = '',
+) -> str:
+    m_low = str(scene_continuity_mode or '').strip().lower()
+    if m_low.startswith('locked_stage'):
+        return 'locked_stage_environment'
+    if m_low.startswith('continuous_one_shot'):
+        return 'continuous_one_shot'
+    if m_low.startswith('hollywood_multi_scene'):
+        return 'hollywood_multi_scene_cuts'
+    raw_u = str(user_scene_input or '').strip()
+    raw_u = re.sub(r'(?is)\[MANDATORY MULTI-IMAGE REFERENCE BINDING\]:.*?\n\n', '', raw_u)
+    raw_u = re.sub(r'(?is)\[SUNO\s+RHYTHMIC[\s\S]*$', '', raw_u)
+    raw_u = re.sub(
+        r'(?i)\b(?:no|zero|without)\s+(?:hard\s+|jump\s+|scene\s+|camera\s+)?(?:cuts?|scene\s+changes?|room\s+changes?)\b',
+        ' ',
+        raw_u,
+    )
+    st_low = str(subject_stance_posture or '').strip().lower()
+    ch_low = str(body_choreography_preset or '').strip().lower()
+    arc_low = str(camera_trajectory_arc or '').strip().lower()
+    wants_explicit_oneshot = bool(
+        re.search(
+            r'(?i)\b(?:one[-\s]?shot|single[-\s]?take|long[-\s]?take|unbroken\s+(?:single\s+)?take|continuous\s+tracking\s+shot|obruten\s+tagning|lång\s+tagning|i\s+en\s+enda\s+tagning)\b',
+            raw_u,
+        )
+    )
+    has_explicit_cut_grammar = bool(
+        re.search(
+            r'(?i)(?:\[\s*(?:SCENE[\s_-]*CUT|HARD[\s_-]*CUT|SMASH[\s_-]*CUT|ACT\s*[2-9]|SCENE\s*[2-9])\s*\]|\b(?:cut\s+to|cuts\s+to|smash\s+cut\s+to|match\s+cut\s+to|cross[-\s]?cut\s+to|hard\s+cut\s+to|scene\s+cut\s+to|in\s+the\s+next\s+scene|switches?\s+scenes?\s+to|meanwhile\s+in\s+another|klipp\s+till|klipper\s+till|scenklipp\s+till|scenbyte\s+till|i\s+nästa\s+scen)\b)',
+            raw_u,
+        )
+    )
+    has_spatial_traversal = bool(
+        re.search(
+            r'(?i)\b(?:walks?\s+(?:out\s+of|out\s+into|into|through|outside|across\s+into)|steps?\s+(?:out\s+of|out\s+into|into|outside|through)|runs?\s+(?:out\s+of|out\s+into|into|through)|emerges?\s+(?:from|out\s+of|into)|exits?\s+(?:the|into|from)|leaves?\s+the\s+[\w\-]+\s+(?:and|into|out\s+into|to\s+enter)|passes?\s+through\s+the\s+(?:door(?:way)?|gate(?:way)?|portal|corridor|hallway|archway|exit)|går\s+(?:ut\s+ur|ut\s+i|ut\s+från|in\s+i|genom)|kliver\s+(?:ut\s+ur|ut\s+i|in\s+i|genom)|springer\s+(?:ut\s+ur|ut\s+i|in\s+i|genom)|lämnar\s+[\wåäöÅÄÖ\-]+\s+och\s+(?:går|kliver|springer|kommer)\s+(?:ut|in))\b',
+            raw_u,
+        )
+    )
+    has_vehicle_or_mount_departure = bool(
+        re.search(
+            r'(?i)\b(?:gets?\s+into|climbs?\s+(?:into|aboard|onto)|steps?\s+(?:into|aboard)|boards?|mounts?|enters?\s+the\s+(?:cockpit|cabin|vehicle|car|ship|craft)|sits?\s+(?:down\s+)?in(?:side)?\s+(?:a|an|the|her|his)|sätter\s+sig\s+i|kliver\s+(?:in\s+i|ombord)|hoppar\s+(?:in\s+i|upp\s+på)|stiger\s+(?:in\s+i|ombord))\b[\s\S]{0,160}\b(?:flies?\s+(?:away|off|up)|drives?\s+(?:away|off)|rides?\s+(?:away|off)|sails?\s+(?:away|off)|speeds?\s+(?:away|off)|takes?\s+off|launches?|soars?|liftoff|ascends?\s+into|flyger\s+(?:iväg|bort|upp)|kör\s+(?:iväg|bort)|rider\s+(?:iväg|bort)|svävar\s+iväg|lyfter\s+(?:mot|upp))\b',
+            raw_u,
+        )
+    )
+    if wants_explicit_oneshot and not has_explicit_cut_grammar:
+        return 'continuous_one_shot'
+    if has_explicit_cut_grammar:
+        return 'hollywood_multi_scene_cuts'
+    if has_vehicle_or_mount_departure and (has_spatial_traversal or st_low.startswith('story_vehicle') or ch_low.startswith('story_multi_act')):
+        return 'hollywood_multi_scene_cuts'
+    if st_low.startswith('story_vehicle') and not wants_explicit_oneshot:
+        return 'hollywood_multi_scene_cuts'
+    if has_spatial_traversal or arc_low.startswith(('outro_track_to_follow', 'crane_ascent')) or ch_low.startswith('story_multi_act'):
+        return 'continuous_one_shot'
+    return 'locked_stage_environment'
+
+
+def _split_general_narrative_beats(user_scene_input: str, num_shots: int, continuity_mode: str = 'locked_stage_environment') -> list:
+    target_n = max(1, int(num_shots or 1))
+    if continuity_mode not in ('continuous_one_shot', 'hollywood_multi_scene_cuts'):
+        return []
+    txt = str(user_scene_input or '').strip()
+    txt = re.sub(r'(?is)\[MANDATORY MULTI-IMAGE REFERENCE BINDING\]:.*?\n\n', '', txt).strip()
+    txt = re.sub(r'(?is)\[SUNO\s+RHYTHMIC[\s\S]*$', '', txt).strip()
+    txt = re.sub(r'(?is)\bBLOCK\s*\d+\b|\[\s*IMAGE\s*\]', ' ', txt).strip()
+    if not txt:
+        return []
+    explicit_cut_split = re.split(
+        r'(?i)(?:\[\s*(?:SCENE[\s_-]*CUT|HARD[\s_-]*CUT|SMASH[\s_-]*CUT)\s*\]|\b(?:smash\s+cut\s+to|match\s+cut\s+to|hard\s+cut\s+to|scene\s+cut\s+to|cut\s+to|klipp\s+till|scenklipp\s+till|scenbyte\s+till)\b)\s*[:,\-]?\s*',
+        txt,
+    )
+    explicit_segments = [re.sub(r'\s+', ' ', seg).strip(' ,;:-') for seg in explicit_cut_split if len(seg.strip(' ,;:-')) >= 6]
+    has_user_cut_tokens = len(explicit_segments) >= 2
+    raw_clauses = []
+    cut_flags = []
+    source_pool = explicit_segments if has_user_cut_tokens else [txt]
+    clause_delim = re.compile(
+        r'(?:(?<=[.!?])\s+|;\s+|\s*,\s*(?=(?:and\s+then|then\s+(?:she|he|they|the)|before\s+\w+ing|after\s+which|sedan\s+|och\s+sedan|varefter\s+|och\s+(?:går|kliver|springer|sätter\s+sig|flyger|kör|rider)|and\s+(?:walks?|steps?|runs?|exits?|emerges?|gets?\s+into|climbs?\s+into|boards?|mounts?|sits?\s+in|flies?\s+away|drives?\s+away|rides?\s+away|takes?\s+off|soars?))\b)|\s+(?=(?:och\s+(?:sätter\s+sig|flyger\s+iväg|kör\s+iväg|rider\s+iväg)|and\s+(?:flies?\s+away|drives?\s+away|rides?\s+away|takes?\s+off))\b))',
+        flags=re.IGNORECASE,
+    )
+    for seg_i, seg_txt in enumerate(source_pool):
+        sub_parts = [re.sub(r'\s+', ' ', p).strip(' ,;:-') for p in clause_delim.split(seg_txt) if len(p.strip(' ,;:-')) >= 6]
+        if not sub_parts:
+            continue
+        for sub_i, sp in enumerate(sub_parts):
+            cleaned_sp = re.sub(r'^(?:and\s+then|and|och\s+sedan|sedan|och)\s+', '', sp, flags=re.IGNORECASE).strip()
+            if not cleaned_sp:
+                continue
+            if not re.match(r'(?i)^(?:<subject\s*1>|she|he|they|the\s+|a\s+|an\s+|in\s+|inside\s+|outside\s+|out\s+|hon|han|de|karaktären)\b', cleaned_sp):
+                cleaned_sp = f'<Subject 1> {cleaned_sp}'
+            raw_clauses.append(cleaned_sp)
+            cut_flags.append(bool(seg_i > 0 and sub_i == 0))
+    if len(raw_clauses) < 2:
+        return []
+    mapped = []
+    prev_beat_idx = -1
+    for s_idx in range(target_n):
+        b_idx = min(len(raw_clauses) - 1, int(math.floor(s_idx * len(raw_clauses) / float(target_n))))
+        beat_txt = raw_clauses[b_idx]
+        is_new_beat = (s_idx > 0 and b_idx != prev_beat_idx)
+        if continuity_mode == 'hollywood_multi_scene_cuts':
+            is_cut = bool(is_new_beat and (cut_flags[b_idx] or not has_user_cut_tokens))
+        else:
+            is_cut = False
+        mapped.append({'shot_idx': s_idx + 1, 'beat_idx': b_idx, 'text': beat_txt, 'is_scene_cut': is_cut})
+        prev_beat_idx = b_idx
+    return mapped
 
 
 def _analyze_scene_cast_and_extras(
@@ -152,7 +272,7 @@ def _analyze_scene_cast_and_extras(
         main_cast_count = max(max_subj_tag, 4)
     elif st_low.startswith('nsfw_threesome') or re.search(r'(?i)\b(?:threesome|foursome|trekant|three\s+(?:characters|people|subjects|lovers|fighters|orcs)|3\s+(?:characters|people|subjects))\b', raw_u):
         main_cast_count = max(max_subj_tag, 3)
-    elif max_subj_tag >= 2 or slot2_is_dual_subject or is_dialogue or has_two_person_combat or (is_intimate and not re.search(r'(?i)\b(?:solo|masturbat(?:ing|ion)|alone)\b', raw_u)) or re.search(r'(?i)\b(?:two\s+(?:characters|people|subjects|women|men|fighters|warriors|lovers|orcs|goblins)|romantic\s+couple|married\s+couple|co-?star|opponent|goblin|senator)\b', raw_u):
+    elif max_subj_tag >= 2 or slot2_is_dual_subject or is_dialogue or has_two_person_combat or (is_intimate and not re.search(r'(?i)\b(?:solo|masturbat(?:ing|ion)|alone|ensam)\b', raw_u)) or re.search(r'(?i)\b(?:two\s+(?:characters|people|subjects|women|men|fighters|warriors|lovers|partners|figures)|romantic\s+couple|married\s+couple|co-?star|opponent)\b', raw_u):
         main_cast_count = max(max_subj_tag, 2)
     else:
         main_cast_count = 1
@@ -186,16 +306,20 @@ def _analyze_scene_cast_and_extras(
     elif ex_low.startswith('intimate_group'):
         extras_mode = 'intimate_group_companions'
     else:
-        if st_low.startswith('standing_social') or is_bar:
+        explicit_bar_crowd = bool(re.search(r'(?i)\b(?:bartender|bar\s+patrons|tavern\s+patrons|crowded\s+(?:bar|tavern|pub|club|nightclub)|gäster\s+i\s+baren|krogmiljö\s+med\s+gäster)\b', raw_u))
+        explicit_city_crowd = bool(re.search(r'(?i)\b(?:pedestrians|urban\s+crowd|crowded\s+street|busy\s+(?:city|street|boulevard|plaza|market)|bustling\s+(?:city|street|market)|myllrande\s+stad|stadsmyller|folkmassa|fotgängare)\b', raw_u))
+        if st_low.startswith('standing_social') or explicit_bar_crowd:
             extras_mode = 'social_bar_tavern_club_patrons'
-        elif is_city:
+        elif explicit_city_crowd:
             extras_mode = 'city_street_pedestrians_crowd'
-        elif st_low.startswith('epic_battlefield') or (is_brawl and re.search(r'(?i)\b(?:brawl|bar\s+fight|battlefield|army|arena|crowd|fighters|slagsmål|krogslagsmål|slagfält|armé)\b', raw_u)):
+        elif st_low.startswith('epic_battlefield') or (is_brawl and re.search(r'(?i)\b(?:battlefield|army|armies|arena\s+crowd|surrounding\s+fighters|slagfält|armé)\b', raw_u)):
             extras_mode = 'brawl_combat_fighters_arena'
         elif st_low.startswith(('nsfw_threesome', 'nsfw_orgy')) or (is_intimate and main_cast_count >= 3):
             extras_mode = 'intimate_group_companions'
         elif is_studio and re.search(r'(?i)\b(?:audience|crowd|spectators|camera\s+crew|publik|åskådare)\b', raw_u):
             extras_mode = 'studio_crew_or_audience'
+        elif re.search(r'(?i)\b(?:statister|background\s+extras|bystanders\s+in\s+the\s+background)\b', raw_u):
+            extras_mode = 'sparse_2_to_4_extras'
         else:
             extras_mode = 'none_isolated_main_cast'
     has_background_extras = (extras_mode != 'none_isolated_main_cast')
@@ -347,7 +471,7 @@ def _analyze_scene_cast_and_extras(
             f'- DYNAMIC MULTI-CHARACTER FOREGROUND CAST ({main_cast_count} DISTINCT MAIN SUBJECTS — ARCHETYPE: {scene_archetype.upper()}): Increment <Main_Subject 1> through <Main_Subject {main_cast_count}> for each foreground protagonist. Stage <Main_Subject 1> ({subj1_summary or "primary character"}) on the left and <Main_Subject 2>'
             + (f' ({subj2_summary})' if subj2_summary else '')
             + (', plus ' + ', '.join([f"{m['tag']} ({m['desc']})" for m in main_subjects_list[2:]]) if len(main_subjects_list) > 2 else '')
-            + ' on the right on the EXACT SAME FOREGROUND PLANE in razor-sharp 35mm f/5.6 deep focus at matching full-scale proportions. CRITICAL INDIVIDUALITY RULE: Each <Main_Subject k> is a distinct individual — bind Reference Slot #1 strictly to <Main_Subject 1>, and render <Main_Subject 2> strictly according to <Main_Subject 2>\'s own description in the user prompt (whether human, goblin, orc, elf, male, or female) without cloning <Main_Subject 1>\'s exact face onto <Main_Subject 2>!'
+            + ' on the right on the EXACT SAME FOREGROUND PLANE in razor-sharp 35mm f/5.6 deep focus at matching full-scale proportions. CRITICAL INDIVIDUALITY RULE: Each <Main_Subject k> is a distinct individual — bind Reference Slot #1 strictly to <Main_Subject 1>, and render <Main_Subject 2> strictly according to <Main_Subject 2>\'s own description in the user prompt (preserving each character\'s own prompted morphology, gender, and attire) without cloning <Main_Subject 1>\'s exact face onto <Main_Subject 2>!'
         )
     if extras_phrase:
         vlm_cast_lines.append(
@@ -392,15 +516,8 @@ def _resolve_3axis_director_directives(subject_stance_posture: str = '', body_ch
     u_low = str(user_scene_input or '').strip().lower()
     cast_info = _analyze_scene_cast_and_extras(user_scene_input, subject_stance_posture, background_extras_crowd, slot2_is_dual_subject=slot2_is_dual_subject, age_difference=age_difference)
     is_crowd = any(st_low.startswith(k) for k in ('standing_social', 'epic_battlefield', 'nsfw_threesome', 'nsfw_orgy')) or bool(cast_info['has_background_extras']) or bool(cast_info['has_multi_main_cast'])
-    force_cam = (not arc_low.startswith(('follow_02', 'auto', ''))) or st_low.startswith('story_vehicle') or ch_low.startswith(('running_action', 'catwalk_runway', 'story_multi_act'))
-    if re.search(r'\b(?:news\s+desk|broadcast\s+desk|broadcast\s+news\s+desk|studio\s+desk|anchor\s+desk|television\s+studio)\b', u_low):
-        sit_phrase = 'seated naturally in a poised upright broadcast anchor posture behind the sleek modern television news desk'
-    elif re.search(r'\b(?:cockpit|pilot\s+seat)\b', u_low):
-        sit_phrase = 'seated naturally in an ergonomic cockpit seat'
-    elif re.search(r'\b(?:barstool|bar\s+counter|tavern\s+bar)\b', u_low):
-        sit_phrase = 'seated naturally on a barstool at the bar counter'
-    else:
-        sit_phrase = 'seated naturally in an ergonomic upright sitting posture at a table or desk'
+    force_cam = (bool(arc_low) and not arc_low.startswith(('follow_02', 'auto'))) or st_low.startswith('story_vehicle') or ch_low.startswith(('running_action', 'catwalk_runway', 'story_multi_act'))
+    sit_phrase = 'seated naturally in a grounded, comfortable sitting posture matching the scene environment'
     stance_map = {
         'standing_upright': 'standing tall and upright in a grounded full-posture stance',
         'sitting_table_bar_or_cockpit': sit_phrase,
@@ -409,35 +526,35 @@ def _resolve_3axis_director_directives(subject_stance_posture: str = '', body_ch
         'kneeling_crouching': 'poised in an intentional kneeling or low crouching stance',
         'standing_social_bar_or_city': 'standing in sharp foreground focus with lively social companions and patrons visible in the background depth',
         'epic_battlefield_army': 'standing as a heroic foreground commander in razor-sharp focus with a massive battlefield army formation fighting in the background',
-        'story_vehicle_or_scene_transition': 'multi-act spatial progression transitioning seamlessly from street level into a cockpit/vehicle and soaring into aerial flight',
-        'nsfw_solo_or_couple': 'intimate 1-to-2 subject adult composition with locked anatomical proportions',
-        'nsfw_threesome_or_group': 'multi-subject 3-to-5 person intimate group composition with distinct anatomical separation and zero limb fusion',
-        'nsfw_orgy_or_harem_scene': 'multi-subject 6+ person harem ensemble scene with coherent background companions and zero limb fusion',
+        'story_vehicle_or_scene_transition': 'executing a multi-act spatial progression transitioning smoothly across environments or into a vehicle/mount as described in the prompt',
+        'nsfw_solo_or_couple': 'staged in an uninhibited 1-to-2 subject intimate adult posture with natural skin contact and coherent anatomical proportions following the user prompt',
+        'nsfw_threesome_or_group': 'staged in a multi-subject 3-to-5 person intimate adult group composition with distinct anatomical separation and zero limb fusion following the user prompt',
+        'nsfw_orgy_or_harem_scene': 'staged in a multi-subject 6+ person adult ensemble composition with coherent companions and zero limb fusion following the user prompt',
     }
     stance_transition_map = {
-        'standing_upright': 'smoothly rises and transitions from the initial starting pose of <Picture 1> (Frame 0) into a tall, grounded upright standing stance',
-        'sitting_table_bar_or_cockpit': f'smoothly shifts and transitions from the initial starting pose of <Picture 1> (Frame 0) into {sit_phrase}',
+        'standing_upright': 'smoothly transitions from the initial starting pose of <Picture 1> (Frame 0) into a tall, grounded upright standing stance',
+        'sitting_table_bar_or_cockpit': f'smoothly transitions from the initial starting pose of <Picture 1> (Frame 0) into {sit_phrase}',
         'reclining_lounging': 'smoothly leans back and transitions from the initial starting pose of <Picture 1> (Frame 0) into a relaxed reclining lounging posture',
         'lying_horizontal': 'smoothly lowers and transitions from the initial starting pose of <Picture 1> (Frame 0) into a supple horizontal lying position',
-        'kneeling_crouching': 'smoothly lowers her center of gravity and transitions from the initial starting pose of <Picture 1> (Frame 0) down into an intentional kneeling or low crouching stance',
-        'standing_social_bar_or_city': 'smoothly transitions from the initial starting pose of <Picture 1> (Frame 0) into a poised foreground standing stance while social patrons animate in the background depth',
+        'kneeling_crouching': 'smoothly lowers their center of gravity and transitions from the initial starting pose of <Picture 1> (Frame 0) down into an intentional kneeling or low crouching stance',
+        'standing_social_bar_or_city': 'smoothly transitions from the initial starting pose of <Picture 1> (Frame 0) into a poised foreground standing stance while social companions animate in the background depth',
         'epic_battlefield_army': 'smoothly transitions from the initial starting pose of <Picture 1> (Frame 0) into a commanding heroic battlefield stance as the army clashes in the background',
-        'story_vehicle_or_scene_transition': 'initiates the multi-act progression from the initial starting pose of <Picture 1> (Frame 0), moving from street level toward the vehicle/cockpit transition',
-        'nsfw_solo_or_couple': 'smoothly transitions from the initial starting pose of <Picture 1> (Frame 0) into an intimate adult posture with locked anatomical proportions',
-        'nsfw_threesome_or_group': 'smoothly transitions from the initial starting pose of <Picture 1> (Frame 0) into the multi-subject intimate group posture with distinct anatomical separation',
-        'nsfw_orgy_or_harem_scene': 'smoothly transitions from the initial starting pose of <Picture 1> (Frame 0) into the ensemble harem posture with coherent companions',
+        'story_vehicle_or_scene_transition': 'initiates the multi-act spatial progression from the initial starting pose of <Picture 1> (Frame 0), moving naturally into the prompted environment or vehicle transition',
+        'nsfw_solo_or_couple': 'smoothly transitions from the initial starting pose of <Picture 1> (Frame 0) into the prompted intimate adult posture with natural skin physics and coherent anatomical proportions',
+        'nsfw_threesome_or_group': 'smoothly transitions from the initial starting pose of <Picture 1> (Frame 0) into the prompted 3-to-5 person intimate group posture with distinct anatomical separation',
+        'nsfw_orgy_or_harem_scene': 'smoothly transitions from the initial starting pose of <Picture 1> (Frame 0) into the prompted 6+ person adult ensemble posture with coherent companions and zero limb fusion',
     }
     choreo_map = {
         'dance_music_video_groove': 'executing beat-synchronized music video dance choreography with rhythmic shoulder, torso, and hip groove',
         'dance_sensual_club': 'performing fluid sensual club dance movements with smooth body-rolls and rhythmic hip-sway',
         'catwalk_runway_strut': 'striding forward directly toward the retreating camera lens in a confident runway catwalk strut',
-        'running_action_sprint': 'sprinting forward at high velocity with dynamic athletic stride and wind-swept momentum toward the lens',
-        'combat_guard_and_parry': 'executing poised martial combat guard, defensive weapon parries, and close-quarters footwork',
-        'combat_heavy_weapon_strikes': 'unleashing powerful heavy weapon strikes and fluid attack combinations while keeping facial features unobstructed',
+        'running_action_sprint': 'sprinting forward at high velocity with dynamic athletic stride and natural momentum',
+        'combat_guard_and_parry': 'executing poised martial combat guard, defensive parries, and agile close-quarters footwork',
+        'combat_heavy_weapon_strikes': 'unleashing powerful heavy weapon strikes and fluid attack combinations while keeping facial features clear',
         'social_toast_dining_chat': 'raising a glass in a social toast, drinking, conversing, and gesturing naturally',
-        'story_multi_act_progression': 'progressing chronologically across distinct narrative acts (Act 1 setup ➔ Act 2 transition ➔ Act 3 climax)',
-        'nsfw_sensual_solo_tease': 'performing slow sensual solo posing, alluring body-arch articulation, and expressive gaze',
-        'nsfw_rhythmic_intimate_motion': 'maintaining continuous rhythmic intimate pelvic and torso motion with locked anatomical contact',
+        'story_multi_act_progression': 'progressing chronologically across distinct narrative acts (Act 1 setup ➔ Act 2 transition ➔ Act 3 culmination) faithful to the user prompt',
+        'nsfw_sensual_solo_tease': 'performing unhurried sensual solo posing, supple spine and hip articulation, natural breathing, and alluring expressive gaze faithful to the user prompt',
+        'nsfw_rhythmic_intimate_motion': 'maintaining continuous rhythmic intimate pelvic and torso motion with natural skin-on-skin physics, synchronized breathing, and coherent anatomical contact faithful to the user prompt',
     }
     arc_map = {
         'backward_track_low_to_high': 'smooth backward-tracking dolly retreating ahead of the subject while sweeping vertically from a low heroic angle up to a high angle (100% front-facing face visibility)',
@@ -445,11 +562,70 @@ def _resolve_3axis_director_directives(subject_stance_posture: str = '', body_ch
         'backward_track_low_to_mid': 'smooth backward-tracking dolly retreating ahead of the subject while rising from a low angle to steady eye-level mid-framing (100% front-facing face visibility)',
         'backward_track_high_to_low': 'smooth backward-tracking dolly retreating ahead of the subject while sweeping from an elevated high angle down to a low heroic angle (100% front-facing face visibility)',
         'backward_track_mid_to_mid': 'smooth eye-level backward-tracking Steadicam retreating at constant distance ahead of the forward-moving subject (100% front-facing face visibility)',
-        'outro_track_to_follow_low_to_high': 'front-facing backward-tracking dolly in Shots 1–2 that smoothly orbits 180 degrees in Shot 3 into a rear follow-cam rising from low to high angle as the subject walks/runs away into the horizon',
+        'outro_track_to_follow_low_to_high': 'front-facing backward-tracking dolly in Shots 1–2 that smoothly orbits 180 degrees in Shot 3 into a rear follow-cam rising from low to high angle as the subject moves toward the horizon',
         'outro_track_to_follow_mid_to_mid': 'front-facing eye-level backward-tracking dolly in Shots 1–2 that smoothly arcs 180 degrees in Shot 3 into an eye-level rear follow-cam behind the subject moving into the environment',
         'outro_track_to_follow_mid_to_low': 'front-facing mid-angle backward-tracking dolly in Shots 1–2 that smoothly arcs 180 degrees in Shot 3 into a low-angle rear follow-cam behind the departing subject',
         'outro_track_to_follow_low_to_low': 'front-facing low-angle backward-tracking dolly in Shots 1–2 that smoothly arcs 180 degrees in Shot 3 into a low-angle rear follow-cam behind the departing subject',
-        'crane_ascent_street_to_aerial': 'continuous cinema crane and drone ascent starting at street level in Shot 1 and rising high into a sweeping aerial skyline view by Shot 3',
+        'crane_ascent_street_to_aerial': 'continuous cinema crane and drone ascent starting at ground level in Shot 1 and rising high into a sweeping aerial view by the final shot',
+    }
+    stance_neg_map = {
+        'standing_upright': '(sitting down, seated on chair, lying down, kneeling on floor, crouching low:1.65)',
+        'sitting_table_bar_or_cockpit': '(standing upright, standing tall, walking across room, running sprint, lying flat on floor:1.70)',
+        'reclining_lounging': '(standing upright, standing tall, stiff rigid upright posture, running sprint:1.70)',
+        'lying_horizontal': '(standing upright, standing tall, walking around, seated upright at desk, running:1.75)',
+        'kneeling_crouching': '(standing upright, standing tall, seated high on chair, walking tall:1.75)',
+        'standing_social_bar_or_city': '(empty deserted void background, isolated empty room without background depth:1.55)',
+        'epic_battlefield_army': '(peaceful empty studio room, isolated indoor portrait without battlefield depth:1.60)',
+        'story_vehicle_or_scene_transition': '(frozen static room, motionless background without spatial progression:1.60)',
+        'nsfw_solo_or_couple': '(censored, mosaic censorship, bar censor, stiff mannequin pose, unrequested extra crowd heads, fused limbs:1.75)',
+        'nsfw_threesome_or_group': '(censored, mosaic censorship, solo isolated single person only, fused bodies, merged limbs, extra disembodied heads:1.75)',
+        'nsfw_orgy_or_harem_scene': '(censored, mosaic censorship, solo isolated single person only, empty background, fused bodies, merged limbs:1.75)',
+    }
+    stance_conflict_map = {
+        'standing_upright': (
+            r'(?i)\b(?:sitting\s+(?:down|on|in|at)|seated\s+(?:on|in|at)|lying\s+(?:down|flat|horizontally)|kneeling\s+(?:down|low|on))\b',
+            'standing tall and upright in a grounded stance',
+        ),
+        'sitting_table_bar_or_cockpit': (
+            r'(?i)\b(?:standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+upright|staying\s+upright|walking\s+across\s+the\s+room)\b',
+            'remaining comfortably seated in a grounded sitting posture',
+        ),
+        'reclining_lounging': (
+            r'(?i)\b(?:standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+upright|staying\s+upright)\b',
+            'reclining comfortably in a relaxed lounging posture',
+        ),
+        'lying_horizontal': (
+            r'(?i)\b(?:standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+upright|staying\s+upright|walking\s+across)\b',
+            'lying horizontally in a supple reclined position',
+        ),
+        'kneeling_crouching': (
+            r'(?i)\b(?:standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance(?:\s+with\s+one\s+leg\s+raised)?|in\s+her\s+grounded\s+raised-leg\s+stance|standing\s+upright|staying\s+upright(?:\s+in\s+frame)?)\b',
+            'kneeling low on the knees in a grounded crouching posture',
+        ),
+    }
+    choreo_neg_map = {
+        'dance_music_video_groove': '(static frozen pose, motionless body, stiff rigid torso, standing still like a statue:1.75)',
+        'dance_sensual_club': '(static frozen pose, stiff wooden hips, motionless rigid torso, robotic stillness:1.75)',
+        'catwalk_runway_strut': '(standing stationary in place, sitting down, walking backward away from camera, static pose:1.70)',
+        'running_action_sprint': '(standing still, slow sluggish walk, sitting down, static frozen legs, motionless pose:1.80)',
+        'combat_guard_and_parry': '(passive relaxed slouching, hands in pockets, lifeless static posture:1.70)',
+        'combat_heavy_weapon_strikes': '(passive motionless stance, limp arms, weak sluggish swing, static frozen pose:1.75)',
+        'social_toast_dining_chat': '(frozen mannequin hands, stiff robotic arms, combat weapon swinging:1.60)',
+        'story_multi_act_progression': '(frozen repetitive loop, identical static pose across all shots:1.65)',
+        'nsfw_sensual_solo_tease': '(stiff rigid mannequin pose, frozen hips, lifeless static body, abrupt jerky twitching:1.75)',
+        'nsfw_rhythmic_intimate_motion': '(static frozen pose, motionless hips, stiff rigid pelvis, frozen statue stillness, broken anatomical contact, detached floating limbs:1.85)',
+    }
+    arc_neg_map = {
+        'backward_track_low_to_high': '(static locked-off camera, turned back, rear view, back of head, zoom-in on forehead:1.65)',
+        'backward_track_mid_to_low': '(static locked-off camera, turned back, rear view, back of head, zoom-in on forehead:1.65)',
+        'backward_track_low_to_mid': '(static locked-off camera, turned back, rear view, back of head, zoom-in on forehead:1.65)',
+        'backward_track_high_to_low': '(static locked-off camera, turned back, rear view, back of head, zoom-in on forehead:1.65)',
+        'backward_track_mid_to_mid': '(static locked-off camera, turned back, rear view, back of head, zoom-in on forehead:1.65)',
+        'outro_track_to_follow_low_to_high': '(static locked-off tripod camera without movement, abrupt jump cut:1.60)',
+        'outro_track_to_follow_mid_to_mid': '(static locked-off tripod camera without movement, abrupt jump cut:1.60)',
+        'outro_track_to_follow_mid_to_low': '(static locked-off tripod camera without movement, abrupt jump cut:1.60)',
+        'outro_track_to_follow_low_to_low': '(static locked-off tripod camera without movement, abrupt jump cut:1.60)',
+        'crane_ascent_street_to_aerial': '(static locked-off eye-level tripod camera, cramped indoor close-up in final shot:1.65)',
     }
     st_key = next((k for k in stance_map if st_low.startswith(k)), '')
     ch_key = next((k for k in choreo_map if ch_low.startswith(k)), '')
@@ -458,13 +634,18 @@ def _resolve_3axis_director_directives(subject_stance_posture: str = '', body_ch
     st_trans_phrase = stance_transition_map.get(st_key, '')
     ch_phrase = choreo_map.get(ch_key, '')
     arc_phrase = arc_map.get(arc_key, '')
+    st_neg = stance_neg_map.get(st_key, '')
+    ch_neg = choreo_neg_map.get(ch_key, '')
+    arc_neg = arc_neg_map.get(arc_key, '')
+    (st_conf_pat, st_conf_repl) = stance_conflict_map.get(st_key, ('', ''))
+    combined_3ax_neg = ', '.join([x for x in (st_neg, ch_neg, arc_neg) if x])
     vlm_lines = []
     if st_phrase:
         vlm_lines.append(
-            f'- MANDATORY VIDEO POSTURE PROGRESSION ({st_key}): In BLOCK 1 ([IMAGE]), preserve the original starting pose from the reference image if provided. In BLOCK 2 (VIDEO TIMELINE), start [Shot 1] from the initial pose of <Picture 1> (Frame 0) and explicitly animate <Subject 1> as she {st_trans_phrase}, then maintain {st_phrase} throughout [Shot 2]..[Shot N].'
+            f'- MANDATORY VIDEO POSTURE PROGRESSION ({st_key}): In BLOCK 1 ([IMAGE]), preserve the original starting pose from the reference image if provided, or follow the user prompt in T2I mode. In BLOCK 2 (VIDEO TIMELINE), start [Shot 1] from Frame 0 and animate <Subject 1> as they {st_trans_phrase}, then maintain {st_phrase} across subsequent shots while prioritizing all specific actions in the user prompt.'
         )
     if ch_phrase:
-        vlm_lines.append(f'- MANDATORY BODY_CHOREOGRAPHY ({ch_key}): Animate the subject {ch_phrase}.')
+        vlm_lines.append(f'- MANDATORY BODY_CHOREOGRAPHY ({ch_key}): Animate the cast {ch_phrase} while faithfully executing every specific beat written in the user prompt.')
     if arc_phrase:
         vlm_lines.append(f'- MANDATORY CAMERA_TRAJECTORY_ARC ({arc_key}): Execute {arc_phrase}.')
     if cast_info['cast_vlm_directive']:
@@ -477,6 +658,12 @@ def _resolve_3axis_director_directives(subject_stance_posture: str = '', body_ch
         'stance_transition_phrase': st_trans_phrase,
         'choreo_phrase': ch_phrase,
         'arc_phrase': arc_phrase,
+        'stance_neg_tokens': st_neg,
+        'choreo_neg_tokens': ch_neg,
+        'arc_neg_tokens': arc_neg,
+        'combined_3axis_neg': combined_3ax_neg,
+        'stance_conflict_pat': st_conf_pat,
+        'stance_conflict_repl': st_conf_repl,
         'is_multi_subject_crowd': is_crowd,
         'is_outro_follow': arc_key.startswith('outro_track_to_follow'),
         'force_camera_move': force_cam,
@@ -486,7 +673,7 @@ def _resolve_3axis_director_directives(subject_stance_posture: str = '', body_ch
 
 
 _EXPLICIT_EROTIC_PROMPT_REGEX = re.compile(
-    r'(?i)\b(?:nude|nudity|naked|topless|bottomless|unclothed|undressed|strip(?:ping|ped)?|pussy|vagina|labia|vulva|clit(?:oris)?|penis|dick|cock|erection|phallus|testicles?|balls|anus|anal|genitals?|genitalia|sex|sexual|intercourse|penetration|penetrat(?:ing|ed)|blowjob|fellatio|cunnilingus|masturbat(?:ion|ing)|orgasm|climax|cum(?:ming)?|semen|sperm|ejaculat(?:ion|ing)|milky\s+liquid|spread\s+legs|exposing\s+(?:her|his|their)\s+(?:vulva|vagina|pussy|penis|cock|genitals?|anus))\b'
+    r'(?i)\b(?:nude|nudity|naked|topless|bottomless|unclothed|undressed|strip(?:ping|ped|s)?|nip\s*slip|nipples?|areolas?|pussy|vagina|labia|vulva|clit(?:oris)?|penis|dick|cock|erection|phallus|testicles?|balls|anus|anal|genitals?|genitalia|sex|sexual|intercourse|penetration|penetrat(?:ing|ed)|blowjob|fellatio|cunnilingus|masturbat(?:ion|ing)|orgasm|climax|cum(?:ming)?|semen|sperm|ejaculat(?:ion|ing)|milky\s+liquid|spread\s+legs|making\s+love|lovemaking|threesome|foursome|orgy|gangbang|harem|naken|nakna|avklädd|klär\s+av\s+sig|tar\s+av\s+sig|älskog|älskar|knulla(?:r|nde)?|suger|slickar|stönar|bröstvårt\w*|fitta\w*|kuk\w*|slida\w*|trekant|orgie|erotisk\w*)\b'
 )
 _EXPLICIT_CAMERA_MOTION_PROMPT_REGEX = re.compile(
     r'(?i)(?<!no\s)(?<!zero\s)(?<!without\s)\b(?:dolly[-\s]?in|dolly[-\s]?out|push[-\s]?in|pull[-\s]?out|zoom[-\s]?in|zoom[-\s]?out|zooms?\s+in|zooms?\s+out|zooming\s+in|zooming\s+out|camera\s+(?:pans?|panning|orbits?|orbiting|tracks?|tracking|zooms?|zooming|pushes\s+in|pulls\s+out|glides?|moves?|tilts?)|panning\s+shot|tracking\s+shot|360[-\s]?degree\s+orbit|crane[-\s]?up|whip[-\s]?pan|fpv\s+drone|zooma(?:r)?\s+in|zooma(?:r)?\s+ut|panorera(?:r)?|kamerarörelse|kamera\s+förflyttning)\b'
@@ -515,14 +702,19 @@ def _prompt_requests_explicit_erotica(user_scene_input: str) -> bool:
     return bool(_EXPLICIT_EROTIC_PROMPT_REGEX.search(str(user_scene_input or '')))
 
 
-def _resolve_content_rating_tier(content_rating_mode: str, user_scene_input: str = '') -> str:
+def _resolve_content_rating_tier(content_rating_mode: str, user_scene_input: str = '', subject_stance_posture: str = '', body_choreography_preset: str = '', background_extras_crowd: str = '') -> str:
     m_low = str(content_rating_mode or '').strip().lower()
     if m_low.startswith('sfw'):
         return 'sfw'
-    if m_low.startswith('uncensored'):
-        return 'uncensored_action'
     if 'explicit' in m_low or 'erotic' in m_low or m_low.startswith('nsfw'):
         return 'nsfw_explicit'
+    st_low = str(subject_stance_posture or '').strip().lower()
+    ch_low = str(body_choreography_preset or '').strip().lower()
+    ex_low = str(background_extras_crowd or '').strip().lower()
+    if st_low.startswith('nsfw_') or ch_low.startswith('nsfw_') or ex_low.startswith('intimate_group') or _prompt_requests_explicit_erotica(user_scene_input):
+        return 'nsfw_explicit'
+    if m_low.startswith('uncensored'):
+        return 'uncensored_action'
     return 'uncensored_action'
 
 
@@ -777,6 +969,101 @@ def _extract_prompt_morphology_profile(user_scene_input: str) -> dict:
     }
 
 
+_SUBJECT_HUMAN_HUMANOID_REGEX = re.compile(
+    r'(?i)\b(?:woman|women|man|men|girl|boy|person|people|lady|gentleman|human|humanoid|cyborg|android|elf|elven|orc|half[-\s]?orc|dwarf|goblin|tiefling|vampire|princess|prince|queen|king|priestess|heroine|warrior|knight|bartender|anchor|singer|vocalist|dancer|lover|couple|she|her|he|him|kvinna|kvinnor|manlig|män|tjej|flicka|kille|pojke|människ\w*)\b'
+)
+_SUBJECT_AVIAN_REGEX = re.compile(
+    r'(?i)\b(?:bird|birds|sparrow|robin|finch|swallow|hummingbird|eagle|hawk|falcon|owl|crow|raven|magpie|parrot|macaw|cockatoo|swan|duck|goose|seagull|pigeon|dove|peacock|penguin|phoenix|griffin|fågel|fåglar|sparv|örn|hök|falk|uggla|kråka|korp|skata|papegoja|svan|anka|mås|duva)\b'
+)
+_SUBJECT_ANIMAL_CREATURE_REGEX = re.compile(
+    r'(?i)\b(?:mouse|mice|rat|rats|rodent|hamster|gerbil|squirrel|chipmunk|beaver|rabbit|bunny|hare|hedgehog|ferret|otter|badger|weasel|stoat|cat|cats|kitten|feline|lion|tiger|panther|leopard|cheetah|jaguar|lynx|cougar|dog|dogs|puppy|hound|canine|wolf|wolves|fox|foxes|coyote|bear|bears|panda|koala|horse|stallion|mare|foal|pony|deer|stag|doe|fawn|moose|elk|reindeer|caribou|elephant|rhino|rhinoceros|hippo|giraffe|zebra|bison|buffalo|cow|bull|goat|sheep|ram|pig|boar|hog|monkey|chimp|ape|gorilla|orangutan|lemur|sloth|bat|whale|dolphin|orca|seal|walrus|shark|fish|salmon|koi|goldfish|octopus|squid|jellyfish|crab|lobster|shrimp|turtle|tortoise|frog|toad|salamander|axolotl|snake|serpent|cobra|viper|python|lizard|gecko|iguana|chameleon|crocodile|alligator|dinosaur|raptor|t-rex|trex|dragon|wyvern|hydra|kaiju|butterfly|moth|bee|bumblebee|wasp|beetle|ladybug|ant|spider|tarantula|scorpion|mantis|dragonfly|snail|mus|möss|råtta|råttor|gnagare|ekorre|bäver|kanin|hare|igelkott|utter|grävling|katt|katter|kattunge|lejon|tiger|panter|lodjur|hund|hundar|valp|varg|vargar|räv|björn|häst|hjort|rådjur|älg|ren|elefant|nosörning|flodhäst|giraff|apa|gorilla|val|delfin|säl|haj|fisk|bläckfisk|krabba|sköldpadda|groda|padda|orm|ödla|krokodil|dinosaurie|drake|fjäril|bi|humla|geting|skalbagge|myra|spindel|snigel)\b'
+)
+_SUBJECT_VEHICLE_OBJECT_REGEX = re.compile(
+    r'(?i)\b(?:sports\s+car|race\s+car|vehicle|automobile|sedan|suv|truck|pickup|motorcycle|motorbike|spaceship|starship|spacecraft|fighter\s+jet|airliner|aircraft|helicopter|drone|mecha|submarine|battleship|sailboat|yacht|locomotive|train|sportbil|racerbil|svävare|lastbil|motorcykel|rymdskepp|flygplan|stridsflygplan|helikopter|drönare|ubåt|segelbåt|lokomotiv|tåg)\b'
+)
+_EXPLICIT_METAMORPHOSIS_REGEX = re.compile(
+    r'(?i)\b(?:transform(?:s|ing|ed)?\s+into|morph(?:s|ing|ed)?\s+into|turn(?:s|ing|ed)?\s+into|shapeshift\w*|metamorphos\w*|transmut(?:e|es|ing|ed)\s+into|förvandlas\s+till|förvandlar\s+sig\s+till|blir\s+till\s+en)\b'
+)
+
+
+def _detect_subject_taxonomy_and_species_lock(
+    user_scene_input: str = '',
+    compiled_raw: str = '',
+    subject_1_age: str = '',
+    custom_subject_1_age: str = '',
+    has_reference_image: bool = False,
+) -> dict:
+    def _strip_compiler_boilerplate(s_in: str) -> str:
+        s0 = str(s_in or '')
+        s0 = re.sub(r'(?is)\[MANDATORY MULTI-IMAGE REFERENCE BINDING\]:.*?\n\n', ' ', s0)
+        s0 = re.sub(r'(?is)\[ACTIVE RUNTIME COMPILER PARAMETERS\][\s\S]*$', ' ', s0)
+        s0 = re.sub(r'(?is)\[SUNO\s+RHYTHMIC[\s\S]*$', ' ', s0)
+        return s0.strip()
+
+    u_clean = _strip_compiler_boilerplate(user_scene_input)
+    vlm_clean = _strip_compiler_boilerplate(compiled_raw)
+    vlm_b1 = re.split(r'(?i)\bBLOCK\s*2\b|\[Shot\s*1\]', vlm_clean)[0] if vlm_clean else ''
+    scan_u = u_clean
+    scan_all = f'{u_clean} {vlm_b1}'.strip()
+    age_sel_low = str(subject_1_age or '').strip().lower()
+    has_explicit_user_age = bool(str(custom_subject_1_age or '').strip()) or bool(re.search(r'(?i)\b\d{1,2}[-\s]?(?:year|yr)s?[-\s]?old\b|\b\d{1,2}\s*år\b', u_clean))
+    allows_metamorphosis = bool(_EXPLICIT_METAMORPHOSIS_REGEX.search(u_clean))
+    u_has_human = bool(_SUBJECT_HUMAN_HUMANOID_REGEX.search(scan_u)) or has_explicit_user_age
+    u_avian_m = _SUBJECT_AVIAN_REGEX.search(scan_u)
+    u_animal_m = _SUBJECT_ANIMAL_CREATURE_REGEX.search(scan_u)
+    u_veh_m = _SUBJECT_VEHICLE_OBJECT_REGEX.search(scan_u)
+    v_has_human = bool(_SUBJECT_HUMAN_HUMANOID_REGEX.search(vlm_b1))
+    v_avian_m = _SUBJECT_AVIAN_REGEX.search(vlm_b1)
+    v_animal_m = _SUBJECT_ANIMAL_CREATURE_REGEX.search(vlm_b1)
+    v_veh_m = _SUBJECT_VEHICLE_OBJECT_REGEX.search(vlm_b1)
+    avian_m = u_avian_m or (v_avian_m if not u_has_human else None)
+    animal_m = u_animal_m or (v_animal_m if not u_has_human else None)
+    veh_m = u_veh_m or (v_veh_m if not u_has_human else None)
+    has_avian_traits_prompted = bool(avian_m) or bool(re.search(r'(?i)\b(?:wings?|winged|feathers?|feathered|beak|talons?|vingar|fjädrar|näbb)\b', scan_all))
+    is_animal = bool(avian_m or animal_m) and (not u_has_human) and (bool(u_avian_m or u_animal_m) or not v_has_human)
+    is_vehicle = (not is_animal) and bool(veh_m) and (not u_has_human) and (bool(u_veh_m) or not v_has_human)
+    is_non_human = bool(is_animal or is_vehicle)
+    matched_species = (avian_m.group(0).lower() if avian_m else (animal_m.group(0).lower() if animal_m else (veh_m.group(0).lower() if veh_m else '')))
+    if is_animal:
+        category = 'avian_animal' if bool(avian_m) else 'non_avian_animal'
+        surf_tex = 'natural plumage and feathers' if bool(avian_m) else 'natural coat, fur, or skin texture'
+        species_lock_clause = (
+            f'preserving exact {matched_species} species anatomy, {surf_tex}, head morphology, and authentic biological proportions'
+            if matched_species else
+            f'preserving exact animal species morphology, {surf_tex}, and authentic biological proportions'
+        )
+        if allows_metamorphosis:
+            species_neg_guard = ''
+        elif bool(avian_m) or has_avian_traits_prompted:
+            species_neg_guard = '(species swap, morphing into mammal or rodent, four-legged mammal body, human face on bird, human hands, human clothes:1.90)'
+        else:
+            species_neg_guard = '(species swap, morphing into another animal, turning into a bird, unrequested wings, feathers, beak, avian talons, human face on animal, human hands, human clothes, anthropomorphic human body:1.92)'
+    elif is_vehicle:
+        category = 'vehicle_or_object'
+        species_lock_clause = f'preserving exact {matched_species or "object"} mechanical geometry, chassis proportions, and physical surface materials'
+        species_neg_guard = '' if allows_metamorphosis else '(morphing into animal or bird, organic flesh on vehicle, unrequested human face:1.80)'
+    else:
+        category = 'human_or_humanoid'
+        species_lock_clause = ''
+        if has_reference_image and not allows_metamorphosis and not has_avian_traits_prompted:
+            species_neg_guard = '(species mutation from reference image, morphing subject into bird or different animal, unrequested wings or beak:1.75)'
+        else:
+            species_neg_guard = ''
+    use_auto_age = bool(is_non_human or age_sel_low.startswith('auto')) and not has_explicit_user_age
+    return {
+        'is_non_human': is_non_human,
+        'is_animal_creature': is_animal,
+        'is_avian': bool(avian_m),
+        'is_vehicle_or_object': is_vehicle,
+        'allows_metamorphosis': allows_metamorphosis,
+        'use_auto_age_bypass': use_auto_age,
+        'category': category,
+        'matched_species': matched_species,
+        'species_lock_clause': species_lock_clause,
+        'species_neg_guard': species_neg_guard,
+    }
+
+
 def _get_style_compiler_profile(resolved_style: str, user_scene_input: str = '') -> dict:
     style_low = str(resolved_style or 'realism').strip().lower()
     if style_low.startswith('original'):
@@ -790,95 +1077,95 @@ def _get_style_compiler_profile(resolved_style: str, user_scene_input: str = '')
     realism_lead = (
         'RAW unretouched 35mm live-action cinema photograph shot on ARRI Alexa 65 with Zeiss Master Prime 50mm f/1.4 lens, photorealistic live-action practical-effects and biological creature cinematography with real biological epidermis, natural subsurface scattering, visible pore micro-relief, real physical bone and enamel ivory, individual physical hair strands, and authentic physical materials while 100% preserving the exact prompted species, head morphology, skin pigment, and attire (strictly real-world live-action camera photography — NEVER a 2D painted illustration, digital painting, or cartoon).'
         if morph['has_fantasy_anatomy'] else
-        'RAW unretouched 35mm live-action cinema photograph shot on ARRI Alexa 65 with Zeiss Master Prime 50mm f/1.4 lens, grounded real-world live-action reality with natural human and animal anatomy, lifelike translucent skin physics with natural subsurface scattering and visible epidermal micro-texture, individual physical hair strands, and authentic physical fabrics and surface materials.'
+        'RAW unretouched 35mm live-action cinema photograph shot on ARRI Alexa 65 with Zeiss Master Prime 50mm f/1.4 lens, grounded real-world live-action reality with natural human and animal anatomy, lifelike translucent skin and fur physics with natural subsurface scattering and visible micro-texture, and authentic physical fabrics and surface materials.'
     )
     baseline_profiles = {
         'original': {
-            'lead': light_styles.get('original') or 'Authentic full-fidelity capture preserving 100% of the reference image\'s exact original photographic realism, natural skin micro-texture, optical lens depth, color grading, lighting, character morphology, and physical material authenticity.',
-            'tail': 'Captured in the exact original visual medium of the reference image with authentic skin micro-texture, natural subsurface scattering, and true-to-source optical depth.',
-            'video_lead': 'Continuous motion sequence preserving the exact original photographic realism, natural skin micro-texture, lighting, and physical materials of <Picture 1>.',
-            'rule': 'preserving 100% of the exact original photographic realism, natural skin micro-texture, lighting, and physical material fidelity of the reference image.',
-            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (original — PRESERVE EXACT REFERENCE MEDIUM & PHOTOGRAPHIC REALISM): Preserve 100% of the reference image\'s exact visual medium, photographic realism, natural skin micro-texture, lighting, character morphology, attire, and color palette. NEVER turn a photograph into semi-realistic CGI, digital painting, 3D game art, or cartoon illustration.',
+            'lead': light_styles.get('original') or 'Authentic full-fidelity capture preserving 100% of the reference image\'s exact original photographic realism, natural surface micro-texture, optical lens depth, color grading, lighting, subject species/morphology, and physical material authenticity.',
+            'tail': 'Captured in the exact original visual medium of the reference image with authentic surface micro-texture, natural subsurface scattering, and true-to-source optical depth.',
+            'video_lead': 'Continuous motion sequence preserving the exact original photographic realism, natural surface micro-texture, lighting, and physical materials of <Picture 1>.',
+            'rule': 'preserving 100% of the exact original photographic realism, natural surface micro-texture, lighting, and physical material fidelity of the reference image.',
+            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (original — PRESERVE EXACT REFERENCE MEDIUM, SPECIES & PHOTOGRAPHIC REALISM): Preserve 100% of the reference image\'s exact visual medium, photographic realism, subject species/morphology, natural surface micro-texture, lighting, attire/coat, and color palette. NEVER turn a photograph into semi-realistic CGI, digital painting, 3D game art, or cartoon illustration.',
             'neg_prefix': '(semi-realistic, stylized 3d, 3d cgi, digital painting, concept art, fantasy illustration, airbrushed skin, plastic doll skin, smooth porcelain skin, cartoon, cartoonish, anime, manga, cel-shading, 2d illustration, lineart, blurry textures, double-exposed details, ghosted overlays:1.85)',
             'strip_pat': r'(?i)\b(?:semi[-\s]?realistic|stylized\s+3d(?:\s+game)?|digital\s+painting|concept\s+art|2d\s+illustration|cartoon(?:ish)?|cel[-\s]?shad(?:ed|ing))\b',
             'strip_repl': 'authentic reference-matched',
         },
         'cartoonish': {
-            'lead': light_styles.get('cartoonish') or "Authentic flat 2D cel-shaded cartoon animation frame in classic Western animated series style, bold black ink outlines, discrete flat 2-tone cel color fills without 3D gradients, stylized 2D cartoon facial proportions, and hand-drawn 2D background art while strictly preserving the character's exact species, facial traits, skin tone, hair, accessories, and attire (strictly flat 2D cartoon cel frame, NEVER semi-realistic 2.5D, NEVER 3D CGI, NEVER photorealistic).",
-            'tail': 'Drawn entirely as a flat 2D cel-shaded cartoon animation frame with bold black ink outlines and discrete flat cel shadow steps without 3D gradients while preserving exact character species, facial features, skin tone, and attire.',
+            'lead': light_styles.get('cartoonish') or "Authentic flat 2D cel-shaded cartoon animation frame in classic Western animated series style, bold black ink outlines, discrete flat 2-tone cel color fills without 3D gradients, stylized 2D cartoon proportions, and hand-drawn 2D background art while strictly preserving the subject's exact species, facial/body traits, skin or fur tone, accessories, and attire (strictly flat 2D cartoon cel frame, NEVER semi-realistic 2.5D, NEVER 3D CGI, NEVER photorealistic).",
+            'tail': 'Drawn entirely as a flat 2D cel-shaded cartoon animation frame with bold black ink outlines and discrete flat cel shadow steps without 3D gradients while preserving exact subject species, morphology, and attire.',
             'video_lead': 'Flat 2D traditional cel-shaded cartoon animation sequence with bold black ink outlines, discrete flat 2D color fills, and expressive 2D hand-drawn frame-by-frame motion.',
-            'rule': 'authentic flat 2D traditional cel-shaded cartoon animation style with bold black ink outlines, discrete flat cel color fills without 3D gradients, and expressive stylized 2D proportions while preserving exact character species, skin tone, facial traits, and attire.',
-            'vlm_directive': "- MANDATORY STYLE_TARGET OVERRIDE (cartoonish — FLAT 2D CEL-SHADED CARTOON FRAME): Translate the ENTIRE scene into a 100% flat 2D cel-shaded Western cartoon animation frame with bold black ink outlines and discrete flat color fills without 3D gradients while strictly preserving the subject's exact species, facial traits, skin color, hair, accessories, and attire. NEVER use camera lens mm terms ('85mm', '50mm', '35mm', 'f/1.4', 'shallow depth of field'), 'semi-realistic', '2.5D', 'photorealistic', 'live-action', '3D', 'CGI', or 'skin pores'.",
+            'rule': 'authentic flat 2D traditional cel-shaded cartoon animation style with bold black ink outlines, discrete flat cel color fills without 3D gradients, and expressive stylized 2D proportions while preserving exact subject species, surface tone, and attire.',
+            'vlm_directive': "- MANDATORY STYLE_TARGET OVERRIDE (cartoonish — FLAT 2D CEL-SHADED CARTOON FRAME): Translate the ENTIRE scene into a 100% flat 2D cel-shaded Western cartoon animation frame with bold black ink outlines and discrete flat color fills without 3D gradients while strictly preserving the subject's exact species, morphology, colors, accessories, and attire. NEVER use camera lens mm terms ('85mm', '50mm', '35mm', 'f/1.4', 'shallow depth of field'), 'semi-realistic', '2.5D', 'photorealistic', 'live-action', '3D', 'CGI', or 'skin pores'.",
             'neg_prefix': '(photorealistic, semi-realistic, 2.5d, 3d shading, soft airbrushed gradients, glossy 3d skin, live-action photograph, raw photo, 35mm film, DSLR, 3d render, 3d cgi, unreal engine, octane render, raytracing, subsurface scattering, realistic skin pores, realistic nose bridge, lifelike photography, volumetric studio photo, chiaroscuro photo, rotoscoped photo filter:1.88)',
             'strip_pat': r'(?i)(?:shot\s+on\s+arri\s+alexa[^.,;]*|\b(?:raw\s+candid\s+35mm\s+live-action\s+photograph|35mm\s+live-action\s+motion\s+picture|photorealistic|semi[-\s]?real(?:istic)?|2\.5d|live[-\s]?action(?:\s+photograph|\s+cinematography)?|raw\s+photo|\d{2,3}mm\s+(?:portrait\s+|macro\s+|anamorphic\s+|master\s+prime\s+)?(?:master\s+shot|lens)(?:\s+at\s+f/\d+(?:\.\d+)?)?(?:\s+with\s+shallow\s+depth\s+of\s+field)?|shallow\s+depth\s+of\s+field|at\s+f/\d+(?:\.\d+)?|f/\d+(?:\.\d+)?\s+aperture|(?:authentic\s+|visible\s+|human\s+|natural\s+)*skin\s+pores|natural\s+subsurface\s+scattering|subsurface\s+scattering|realistic\s+physical\s+surface\s+materials|3d\s+(?:shading|cinematic\s+cgi|cgi|render|game\s+engine)|soft\s+airbrushed(?:\s+gradients)?|specular\s+skin|unreal\s+engine(?:\s+5(?:\.5)?)?|nanite|lumen|path[-\s]?traced|ray[-\s]?traced)\b)',
             'strip_repl': 'flat 2D cel-shaded cartoon illustration with bold black outlines',
         },
         'anime': {
-            'lead': light_styles.get('anime') or "Authentic flat 2D Japanese TV anime cel-shaded keyframe screenshot (anime screencap, flat color, cel shading), crisp hand-drawn black ink lineart outlines, discrete 2-tone flat cel shadow steps with sharp hard shadow boundaries, flat matte 2D anime skin and clothing fills without 3D gradients, classic stylized 2D anime facial proportions with simplified anime nose line and expressive flat 2D anime eyes, and hand-painted 2D anime background art while strictly preserving the character's exact species, hair color, glasses/accessories, skin tone, and attire (strictly flat 2D Japanese TV cel-animation frame, NEVER semi-realistic 2.5D, NEVER 3D CGI, NEVER photorealistic).",
-            'tail': 'Illustrated strictly as an authentic flat 2D Japanese TV anime cel-shaded keyframe screenshot with crisp black ink lineart outlines and discrete 2-tone flat cel shadows without 3D airbrushed gradients while strictly preserving exact character species, facial traits, skin tone, and attire.',
-            'video_lead': 'Authentic flat 2D Japanese TV anime cel-shaded animation sequence with crisp black ink lineart, discrete 2-tone flat cel shadows, expressive 2D anime character acting, and clean 2D keyframe motion.',
-            'rule': 'authentic flat 2D Japanese TV anime cel-shaded keyframe style (anime screencap, flat color, discrete 2-tone cel shading) with crisp black ink outlines, flat matte 2D color fills without 3D gradients, and classic 2D anime eyes while strictly preserving exact character species, skin tone, facial traits, and attire.',
-            'vlm_directive': "- MANDATORY STYLE_TARGET OVERRIDE (anime — AUTHENTIC FLAT 2D JAPANESE TV ANIME CEL-SHADED KEYFRAME): Translate the ENTIRE scene into a 100% flat 2D Japanese TV anime cel-shaded keyframe screenshot (anime screencap, flat color, discrete 2-tone cel shading with sharp hard shadow edges and crisp black ink lineart) without any 3D gradients or airbrushed rendering while strictly preserving the subject's exact species, facial traits, hair color, glasses/accessories, skin color, and attire from the prompt and reference. NEVER write 'semi-realistic', '2.5D', 'Ufotable', 'luminous', 'specular', '3D anime', '3D', 'CGI', 'photorealistic', 'live-action', '85mm', '50mm', '35mm', 'f/1.4', 'shallow depth of field', 'skin pores', or 'subsurface scattering'.",
+            'lead': light_styles.get('anime') or "Authentic flat 2D Japanese TV anime cel-shaded keyframe screenshot (anime screencap, flat color, cel shading), crisp hand-drawn black ink lineart outlines, discrete 2-tone flat cel shadow steps with sharp hard shadow boundaries, flat matte 2D anime color fills without 3D gradients, classic stylized 2D anime proportions and expressive flat 2D anime eyes, and hand-painted 2D anime background art while strictly preserving the subject's exact species, morphology, colors, accessories, and attire (strictly flat 2D Japanese TV cel-animation frame, NEVER semi-realistic 2.5D, NEVER 3D CGI, NEVER photorealistic).",
+            'tail': 'Illustrated strictly as an authentic flat 2D Japanese TV anime cel-shaded keyframe screenshot with crisp black ink lineart outlines and discrete 2-tone flat cel shadows without 3D airbrushed gradients while strictly preserving exact subject species, morphology, colors, and attire.',
+            'video_lead': 'Authentic flat 2D Japanese TV anime cel-shaded animation sequence with crisp black ink lineart, discrete 2-tone flat cel shadows, expressive 2D anime acting, and clean 2D keyframe motion.',
+            'rule': 'authentic flat 2D Japanese TV anime cel-shaded keyframe style (anime screencap, flat color, discrete 2-tone cel shading) with crisp black ink outlines, flat matte 2D color fills without 3D gradients, and classic 2D anime styling while strictly preserving exact subject species, colors, and attire.',
+            'vlm_directive': "- MANDATORY STYLE_TARGET OVERRIDE (anime — AUTHENTIC FLAT 2D JAPANESE TV ANIME CEL-SHADED KEYFRAME): Translate the ENTIRE scene into a 100% flat 2D Japanese TV anime cel-shaded keyframe screenshot (anime screencap, flat color, discrete 2-tone cel shading with sharp hard shadow edges and crisp black ink lineart) without any 3D gradients or airbrushed rendering while strictly preserving the subject's exact species, morphology, colors, glasses/accessories, and attire from the prompt and reference. NEVER write 'semi-realistic', '2.5D', 'Ufotable', 'luminous', 'specular', '3D anime', '3D', 'CGI', 'photorealistic', 'live-action', '85mm', '50mm', '35mm', 'f/1.4', 'shallow depth of field', 'skin pores', or 'subsurface scattering'.",
             'neg_prefix': '(photorealistic, semi-realistic, 2.5d, 3d shading, soft airbrushed gradients, glossy 3d skin, painterly 3d render, cgi doll, live-action photograph, raw photo, 35mm film, DSLR, 3d render, 3d cgi, 3d anime, unreal engine, western cartoon, american comic book, rotoscoped photo filter, traced photo, muddy brown colors, dull desaturated vintage anime, thick heavy marker outlines, double mouth, smudged lips, realistic human lips, realistic 3d nose bridge, subsurface scattering, realistic skin pores:1.92)',
             'strip_pat': r'(?i)(?:shot\s+on\s+arri\s+alexa[^.,;]*|\b(?:raw\s+candid\s+35mm\s+live-action\s+photograph|35mm\s+live-action\s+motion\s+picture|photorealistic|semi[-\s]?real(?:istic)?|2\.5d|live[-\s]?action(?:\s+photograph|\s+cinematography)?|raw\s+photo|\d{2,3}mm\s+(?:portrait\s+|macro\s+|anamorphic\s+|master\s+prime\s+)?(?:master\s+shot|lens)(?:\s+at\s+f/\d+(?:\.\d+)?)?(?:\s+with\s+shallow\s+depth\s+of\s+field)?|shallow\s+depth\s+of\s+field|at\s+f/\d+(?:\.\d+)?|f/\d+(?:\.\d+)?\s+aperture|(?:authentic\s+|visible\s+|human\s+|natural\s+)*skin\s+pores|natural\s+subsurface\s+scattering|subsurface\s+scattering|realistic\s+physical\s+surface\s+materials|3d\s+anime|3d\s+(?:shading|cinematic\s+cgi|cgi|render|game\s+engine)|soft\s+airbrushed(?:\s+gradients)?|specular\s+skin|luminous\s+multi[-\s]?tone|ufotable|unreal\s+engine(?:\s+5(?:\.5)?)?|nanite|lumen|path[-\s]?traced|ray[-\s]?traced)\b)',
             'strip_repl': 'flat 2D Japanese cel-shaded anime keyframe',
         },
         'semi-real': {
-            'lead': light_styles.get('semi-real') or 'Stylized 3D semi-realistic video game cinematic character art in Arcane and Blizzard cinematic style, hand-painted stylized brush-stroke PBR surface textures, sculpted stylized facial geometry, painterly hair ribbons, and dramatic stylized 3D CGI rim shading while preserving exact character species, facial traits, skin tone, and attire (stylized semi-real painterly 3D game art, NOT raw live-action camera photograph, NOT flat 2D cartoon).',
-            'tail': 'Rendered in stylized semi-realistic 3D video game cinematics with sculpted stylized character proportions, hand-painted 3D surface brush textures, and stylized CGI shading.',
-            'video_lead': 'Stylized 3D semi-realistic game cinematic sequence with sculpted stylized character proportions, hand-painted PBR brush textures, and fluid 3D CGI animation.',
+            'lead': light_styles.get('semi-real') or 'Stylized 3D semi-realistic video game cinematic art in Arcane and Blizzard cinematic style, hand-painted stylized brush-stroke PBR surface textures, sculpted stylized geometry, and dramatic stylized 3D CGI rim shading while preserving exact subject species, morphology, colors, and attire (stylized semi-real painterly 3D game art, NOT raw live-action camera photograph, NOT flat 2D cartoon).',
+            'tail': 'Rendered in stylized semi-realistic 3D video game cinematics with sculpted stylized proportions, hand-painted 3D surface brush textures, and stylized CGI shading.',
+            'video_lead': 'Stylized 3D semi-realistic game cinematic sequence with sculpted stylized proportions, hand-painted PBR brush textures, and fluid 3D CGI animation.',
             'rule': 'stylized 3D semi-realistic game cinematic aesthetic blending sculpted stylized proportions with hand-painted 3D shading.',
-            'vlm_directive': "- MANDATORY STYLE_TARGET OVERRIDE (semi-real — STYLIZED PAINTERLY 3D GAME CINEMATIC CGI): Render the scene as stylized semi-realistic 3D video game cinematic art (blending sculpted stylized proportions with hand-painted 3D PBR brush textures while prioritizing exact prompted species, distinctive anatomy, skin pigment, and attire). Avoid raw live-action camera photography terms ('RAW 35mm live-action photograph', 'skin pores', 'ARRI Alexa') and avoid flat 2D cartoon terms.",
+            'vlm_directive': "- MANDATORY STYLE_TARGET OVERRIDE (semi-real — STYLIZED PAINTERLY 3D GAME CINEMATIC CGI): Render the scene as stylized semi-realistic 3D video game cinematic art (blending sculpted stylized proportions with hand-painted 3D PBR brush textures while prioritizing exact prompted species, distinctive anatomy, colors, and attire). Avoid raw live-action camera photography terms ('RAW 35mm live-action photograph', 'skin pores', 'ARRI Alexa') and avoid flat 2D cartoon terms.",
             'neg_prefix': '(raw candid photograph, live-action documentary photo, unretouched skin pores, 35mm film grain, ARRI Alexa live-action, flat 2d cartoon, flat 2d anime, lineart, sketch, comic strip:1.65)',
             'strip_pat': r'(?i)\b(?:raw\s+candid\s+35mm\s+live-action\s+photograph|raw\s+unretouched\s+35mm\s+live-action\s+camera\s+photograph|live[-\s]?action\s+photograph|raw\s+photo|shot\s+on\s+arri\s+alexa[^.,;]*|(?:authentic\s+|visible\s+|genuine\s+|epidermal\s+|human\s+)*skin\s+pore(?:\s+micro[-\s]?relief|\s+micro[-\s]?texture|s)?|2d\s+traditional\s+cel-shaded\s+cartoon|2d\s+illustration)\b',
             'strip_repl': 'stylized 3D semi-realistic game cinematic render',
         },
         'unreal-engine-5': {
-            'lead': light_styles.get('unreal-engine-5') or 'Unreal Engine 5.5 next-gen 3D video game engine render with Nanite micro-polygon geometry, Lumen ray-traced global illumination, physically based 3D game shaders, and crisp real-time 3D rendering while preserving exact character species, facial morphology, skin tone, and attire.',
+            'lead': light_styles.get('unreal-engine-5') or 'Unreal Engine 5.5 next-gen 3D video game engine render with Nanite micro-polygon geometry, Lumen ray-traced global illumination, physically based 3D game shaders, and crisp real-time 3D rendering while preserving exact subject species, morphology, colors, and attire.',
             'tail': 'Rendered in Unreal Engine 5.5 with Lumen ray-traced reflections and Nanite 3D geometry.',
             'video_lead': 'Unreal Engine 5.5 real-time 3D cinematic sequence with Lumen global illumination and Nanite 3D geometry.',
             'rule': 'hyper-detailed Unreal Engine 5.5 Lumen global illumination and Nanite 3D micro-polygon surface rendering.',
-            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (unreal-engine-5): Render the entire scene as a hyper-detailed Unreal Engine 5.5 3D render with Lumen global illumination and Nanite geometry while preserving exact character species, facial morphology, skin tone, and attire. Prohibit 2D anime or flat cartoon terms.',
+            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (unreal-engine-5): Render the entire scene as a hyper-detailed Unreal Engine 5.5 3D render with Lumen global illumination and Nanite geometry while preserving exact subject species, morphology, colors, and attire. Prohibit 2D anime or flat cartoon terms.',
             'neg_prefix': '(2d flat anime, flat cel-shading, 2d cartoon, lineart, hand-drawn sketch, watercolor, vintage film grain:1.6)',
             'strip_pat': r'(?i)\b(?:anime|manga|cel[-\s]?shad(?:ed|ing)|2d\s*illustration|cartoon(?:ish)?|comic[-\s]?book)\b',
             'strip_repl': 'Unreal Engine 5.5 3D render',
         },
         'cinematic-film-35mm': {
-            'lead': light_styles.get('cinematic-film-35mm') or 'Anamorphic 35mm Kodak Vision3 500T motion picture film still shot on Panavision Primo anamorphic cinema lens with deep foreground-to-midground optical sharpness, fine cinema color grading, and theatrical rim lighting while preserving exact prompted species, physical anatomy, skin pigment, and attire.',
+            'lead': light_styles.get('cinematic-film-35mm') or 'Anamorphic 35mm Kodak Vision3 500T motion picture film still shot on Panavision Primo anamorphic cinema lens with deep foreground-to-midground optical sharpness, fine cinema color grading, and theatrical rim lighting while preserving exact prompted species, physical anatomy, colors, and attire.',
             'tail': 'Captured on 35mm Kodak Vision3 motion picture film stock with crisp foreground focus and authentic Panavision cinema optics.',
             'video_lead': 'Anamorphic 35mm Kodak Vision3 500T motion picture film sequence shot on Panavision Primo cinema lens with crisp foreground focus and theatrical color grading.',
             'rule': 'authentic 35mm Kodak Vision3 motion picture film stock with crisp foreground optical sharpness and Panavision cinema color grading.',
-            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (cinematic-film-35mm): Translate the entire scene into an authentic 35mm Kodak Vision3 motion picture film frame shot on Panavision anamorphic lenses with crisp foreground focus while preserving exact prompted species, skin tone, and attire. Prohibit 2D painted illustration, anime, cartoon, or 3D video game CGI terms.',
+            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (cinematic-film-35mm): Translate the entire scene into an authentic 35mm Kodak Vision3 motion picture film frame shot on Panavision anamorphic lenses with crisp foreground focus while preserving exact prompted species, colors, and attire. Prohibit 2D painted illustration, anime, cartoon, or 3D video game CGI terms.',
             'neg_prefix': '(2d illustration, 2d painted, digital painting, fantasy painting, concept art, anime, manga, cel-shading, cartoon, comic, lineart, flat shading, 3d video game cgi, plastic doll skin, heavy halation bloom:1.80)',
             'strip_pat': r'(?i)\b(?:anime|manga|cel[-\s]?shad(?:ed|ing)|2d\s*illustration|cartoon(?:ish)?|comic[-\s]?book|digital\s+painting|fantasy\s+illustration|concept\s+art|3d\s+game\s+engine)\b',
             'strip_repl': '35mm Kodak Vision3 motion picture film',
         },
         'dark-fantasy-real': {
-            'lead': light_styles.get('dark-fantasy-real') or 'Live-action grimdark dark-fantasy cinema photograph shot on ARRI Alexa 65 with Panavision Primo anamorphic 35mm f/1.8 shallow depth of field, real biological skin pores and subsurface scattering, authentic practical Weta-grade forged blackened steel armor, gothic iron filigree and weathered leather, deep abyssal chiaroscuro shadow contrast, cold slate-blue nocturnal mist clashing with scorching molten ember rim lighting, and deep optical Z-axis background bokeh pushing gothic stone vaults into volumetric out-of-focus depth while preserving exact character facial likeness, species, skin pigment, and eyewear.',
-            'tail': 'Captured on ARRI Alexa 65 anamorphic 35mm f/1.8 live-action cinema optics with real biological skin micro-texture, physical forged dark-fantasy materials, deep chiaroscuro shadows, and deep 3D Z-axis gothic bokeh (never a 2D painting, book cover, or 3D video game render).',
-            'video_lead': 'Live-action grimdark dark-fantasy motion picture sequence shot on ARRI Alexa 65 anamorphic 35mm f/1.8 with real biological skin subsurface scattering, practical forged dark steel and weathered gothic leather, volumetric nocturnal mist, molten ember rim lighting, and deep Z-axis optical bokeh.',
-            'rule': 'authentic live-action ARRI Alexa 65 anamorphic 35mm f/1.8 grimdark dark-fantasy cinema (The Witcher / Nosferatu practical VFX aesthetic) with real biological skin pores, practical forged dark-fantasy armor and regalia, deep chiaroscuro contrast, and deep Z-axis optical depth of field.',
-            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (dark-fantasy-real — LIVE-ACTION ARRI ALEXA 65 GRIMDARK DARK-FANTASY CINEMA): Render the scene as a 100% live-action grimdark dark-fantasy motion picture photograph shot on ARRI Alexa 65 with anamorphic 35mm f/1.8 shallow depth of field (The Witcher / Nosferatu practical Weta-grade VFX). Enforce real biological epidermis with visible skin pores and subsurface scattering, authentic physical forged blackened iron/steel armor, gothic crowns/horns if dark-fantasy transmutation fits, cold slate-blue mist vs molten ember rim lighting, and deep 3D Z-axis spatial depth pushing gothic stone ruins far behind the subject in optical bokeh. Strictly prohibit 2D digital paintings, book-cover art, concept art, anime, cartoon, and 3D video-game CGI.',
+            'lead': light_styles.get('dark-fantasy-real') or 'Live-action grimdark dark-fantasy cinema photograph shot on ARRI Alexa 65 with Panavision Primo anamorphic 35mm f/1.8 shallow depth of field, authentic biological surface micro-texture and subsurface scattering, tactile physical dark-fantasy environment and material textures, deep abyssal chiaroscuro shadow contrast, cold slate-blue nocturnal mist clashing with scorching molten ember rim lighting, and deep optical Z-axis background bokeh while strictly preserving exact subject species, anatomy, and prompted or reference attire without inventing unrequested armor.',
+            'tail': 'Captured on ARRI Alexa 65 anamorphic 35mm f/1.8 live-action cinema optics with authentic biological micro-texture, tactile physical dark-fantasy atmosphere, deep chiaroscuro shadows, and deep 3D Z-axis bokeh (never a 2D painting, book cover, or 3D video game render).',
+            'video_lead': 'Live-action grimdark dark-fantasy motion picture sequence shot on ARRI Alexa 65 anamorphic 35mm f/1.8 with authentic biological subsurface scattering, tactile physical materials, volumetric nocturnal mist, molten ember rim lighting, and deep Z-axis optical bokeh.',
+            'rule': 'authentic live-action ARRI Alexa 65 anamorphic 35mm f/1.8 grimdark dark-fantasy cinema (The Witcher / Nosferatu practical cinema aesthetic) with authentic biological surface micro-texture, deep chiaroscuro contrast, cold mist vs molten ember rim lighting, and deep Z-axis optical depth of field.',
+            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (dark-fantasy-real — LIVE-ACTION ARRI ALEXA 65 GRIMDARK DARK-FANTASY CINEMA): Render the scene as a 100% live-action grimdark dark-fantasy motion picture photograph shot on ARRI Alexa 65 with anamorphic 35mm f/1.8 shallow depth of field. Enforce authentic biological surface micro-texture and subsurface scattering, cold slate-blue mist vs molten ember rim lighting, and deep 3D Z-axis spatial depth while strictly preserving the subject\'s exact species, morphology, and prompted or reference attire (NEVER invent unrequested battle gear or helmets unless requested in the prompt). Strictly prohibit 2D digital paintings, book-cover art, concept art, anime, cartoon, and 3D video-game CGI.',
             'neg_prefix': '(2d digital painting, 2d painted illustration, flat 2d, fantasy book cover, concept art, oil painting, wlop style, painterly brushwork, flat canvas, painted 2d background, airbrushed doll skin, smooth plastic skin, 3d cgi, 3d video game render, unreal engine, arcane style, bright sunny daylight, flat neutral studio lighting, mundane modern office, anime, manga, cel-shading, cartoon, comic strip, lineart:1.90)',
             'strip_pat': r'(?i)\b(?:anime|manga|cel[-\s]?shad(?:ed|ing)|2d\s*illustration|2d\s*painted|cartoon(?:ish)?|comic[-\s]?book|digital\s+painting|fantasy\s+(?:painting|illustration)|concept\s+art|book\s+cover(?:\s+art)?|3d\s+(?:cgi|game\s+engine|video\s+game)|unreal\s+engine|painterly(?:\s+pbr|\s+textures|\s+shading)?)\b',
             'strip_repl': 'live-action ARRI Alexa 65 grimdark dark-fantasy cinema',
         },
         'dark-fantasy-cgi': {
-            'lead': light_styles.get('dark-fantasy-cgi') or 'Pre-rendered next-gen 3D VFX dark-fantasy cinematic cutscene in Diablo IV and Blur Studio offline path-traced aesthetic, ray-traced global illumination, ornate engraved dark-iron and tarnished-gold gothic plate armor, tactile 3D PBR skin micro-detail and subsurface scattering, deep abyssal chiaroscuro shadow contrast, volumetric multi-plane cold slate-blue mist, drifting molten ember sparks, and 35mm f/1.8 cinema lens Z-axis spatial depth pushing towering gothic architecture into deep 3D bokeh while preserving exact character facial likeness, species, skin pigment, and eyewear.',
+            'lead': light_styles.get('dark-fantasy-cgi') or 'Pre-rendered next-gen 3D VFX dark-fantasy cinematic cutscene in Diablo IV and Blur Studio offline path-traced aesthetic, ray-traced global illumination, tactile 3D PBR surface and material micro-detail with subsurface scattering, deep abyssal chiaroscuro shadow contrast, volumetric multi-plane cold slate-blue mist, drifting molten ember sparks, and 35mm f/1.8 cinema lens Z-axis spatial depth while strictly preserving exact subject species, anatomy, and prompted or reference attire without inventing unrequested armor.',
             'tail': 'Pre-rendered in offline path-traced Diablo IV / Blur Studio 3D VFX cinema quality with ray-traced PBR shaders, volumetric Z-axis depth of field, cold abyssal mist, and molten ember rim highlights (never a flat 2D digital painting or painted book cover).',
-            'video_lead': 'Pre-rendered Diablo IV / Blur Studio offline path-traced 3D VFX dark-fantasy cinematic cutscene sequence with ray-traced PBR materials, ornate gothic dark-iron armor, volumetric multi-plane nocturnal fog, drifting molten embers, and deep Z-axis cinema depth of field.',
-            'rule': 'pre-rendered Diablo IV / Blur Studio offline path-traced 3D VFX dark-fantasy cutscene aesthetic with ray-traced PBR shaders, sculpted gothic armor and regalia, volumetric multi-plane fog, molten ember rim lighting, and deep 3D Z-axis camera depth separation.',
-            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (dark-fantasy-cgi — DIABLO IV / BLUR STUDIO PRE-RENDERED 3D VFX DARK-FANTASY CUTSCENE): Render the scene as an offline path-traced next-gen 3D VFX dark-fantasy cinematic cutscene (Diablo IV / Elden Ring CGI trailer by Blur Studio). Enforce tangible 3D PBR micro-surface detail on skin, ornate engraved dark steel and tarnished gold gothic armor, sculpted gothic crowns/horns if dark-fantasy transmutation fits, volumetric multi-plane nocturnal mist, glowing ember sparks, and deep 35mm f/1.8 Z-axis spatial separation pushing gothic cathedrals/ruins deep into background bokeh. Strictly prohibit flat 2D digital paintings, 2D book-cover illustrations, painterly 2D brushwork, raw candid documentary snapshots, anime, and flat cel-shading.',
+            'video_lead': 'Pre-rendered Diablo IV / Blur Studio offline path-traced 3D VFX dark-fantasy cinematic cutscene sequence with ray-traced PBR materials, volumetric multi-plane nocturnal fog, drifting molten embers, and deep Z-axis cinema depth of field.',
+            'rule': 'pre-rendered Diablo IV / Blur Studio offline path-traced 3D VFX dark-fantasy cutscene aesthetic with ray-traced PBR shaders, deep chiaroscuro contrast, volumetric multi-plane fog, molten ember rim lighting, and deep 3D Z-axis camera depth separation.',
+            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (dark-fantasy-cgi — DIABLO IV / BLUR STUDIO PRE-RENDERED 3D VFX DARK-FANTASY CUTSCENE): Render the scene as an offline path-traced next-gen 3D VFX dark-fantasy cinematic cutscene (Diablo IV / Elden Ring CGI trailer by Blur Studio). Enforce tangible 3D PBR micro-surface detail, volumetric multi-plane nocturnal mist, glowing ember sparks, and deep 35mm f/1.8 Z-axis spatial separation while strictly preserving exact subject species, morphology, and prompted or reference attire (NEVER invent unrequested battle gear unless requested in the prompt). Strictly prohibit flat 2D digital paintings, 2D book-cover illustrations, painterly 2D brushwork, raw candid documentary snapshots, anime, and flat cel-shading.',
             'neg_prefix': '(2d digital painting, 2d painted illustration, flat 2d, fantasy book cover, tabletop illustration, concept art, oil painting, wlop style, painterly brushwork, flat canvas, painted 2d background, flat stone relief wall, raw candid documentary photo, grainy CCTV, bright sunny daylight, flat neutral studio lighting, mundane modern office, anime, manga, cel-shading, cartoon, comic strip, lineart, sketch:1.88)',
             'strip_pat': r'(?i)\b(?:anime|manga|cel[-\s]?shad(?:ed|ing)|2d\s*illustration|2d\s*painted|cartoon(?:ish)?|comic[-\s]?book|digital\s+painting|fantasy\s+(?:painting|illustration)|concept\s+art|book\s+cover(?:\s+art)?|painterly(?:\s+brushwork|\s+shading)?|raw\s+candid\s+35mm\s+live-action\s+photograph|shot\s+on\s+arri\s+alexa[^.,;]*)\b',
             'strip_repl': 'pre-rendered Diablo IV 3D VFX dark-fantasy cutscene',
         },
         'dark-fantasy': {
-            'lead': light_styles.get('dark-fantasy-real') or light_styles.get('dark-fantasy') or 'Live-action grimdark dark-fantasy cinema photograph shot on ARRI Alexa 65 with Panavision Primo anamorphic 35mm f/1.8 shallow depth of field, real biological skin pores and subsurface scattering, authentic practical Weta-grade forged blackened steel armor, gothic iron filigree and weathered leather, deep abyssal chiaroscuro shadow contrast, cold slate-blue nocturnal mist clashing with molten ember rim lighting, and deep optical Z-axis background bokeh.',
-            'tail': 'Captured on ARRI Alexa 65 anamorphic 35mm f/1.8 live-action cinema optics with real biological skin micro-texture, physical forged dark-fantasy materials, and deep 3D Z-axis gothic bokeh.',
-            'video_lead': 'Live-action grimdark dark-fantasy motion picture sequence shot on ARRI Alexa 65 anamorphic 35mm f/1.8 with real biological skin subsurface scattering, forged dark steel, nocturnal mist, and molten ember rim lighting.',
-            'rule': 'authentic live-action ARRI Alexa 65 anamorphic 35mm f/1.8 grimdark dark-fantasy cinema with real biological skin pores, practical forged dark-fantasy materials, and deep Z-axis optical depth of field.',
-            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (dark-fantasy — LIVE-ACTION GRIMDARK DARK-FANTASY CINEMA): Render as a live-action ARRI Alexa 65 anamorphic 35mm f/1.8 grimdark dark-fantasy cinema frame with real biological skin pores, physical dark-fantasy materials, and deep Z-axis background bokeh. Prohibit 2D digital paintings, book-cover art, anime, cartoon, and 3D video-game CGI.',
+            'lead': light_styles.get('dark-fantasy-real') or light_styles.get('dark-fantasy') or 'Live-action grimdark dark-fantasy cinema photograph shot on ARRI Alexa 65 with Panavision Primo anamorphic 35mm f/1.8 shallow depth of field, authentic biological surface micro-texture and subsurface scattering, tactile physical dark-fantasy environment and material textures, deep abyssal chiaroscuro shadow contrast, cold slate-blue nocturnal mist clashing with molten ember rim lighting, and deep optical Z-axis background bokeh while preserving exact subject species, anatomy, and attire.',
+            'tail': 'Captured on ARRI Alexa 65 anamorphic 35mm f/1.8 live-action cinema optics with authentic biological micro-texture, tactile physical dark-fantasy materials, and deep 3D Z-axis gothic bokeh.',
+            'video_lead': 'Live-action grimdark dark-fantasy motion picture sequence shot on ARRI Alexa 65 anamorphic 35mm f/1.8 with authentic biological subsurface scattering, nocturnal mist, and molten ember rim lighting.',
+            'rule': 'authentic live-action ARRI Alexa 65 anamorphic 35mm f/1.8 grimdark dark-fantasy cinema with authentic biological surface micro-texture, tactile physical dark-fantasy materials, and deep Z-axis optical depth of field.',
+            'vlm_directive': '- MANDATORY STYLE_TARGET OVERRIDE (dark-fantasy — LIVE-ACTION GRIMDARK DARK-FANTASY CINEMA): Render as a live-action ARRI Alexa 65 anamorphic 35mm f/1.8 grimdark dark-fantasy cinema frame with authentic biological micro-texture, tactile physical dark-fantasy atmosphere, and deep Z-axis background bokeh while strictly preserving exact subject species and prompted/reference attire. Prohibit 2D digital paintings, book-cover art, anime, cartoon, and 3D video-game CGI.',
             'neg_prefix': '(2d digital painting, 2d painted illustration, flat 2d, fantasy book cover, concept art, oil painting, wlop style, painterly brushwork, flat canvas, painted 2d background, airbrushed doll skin, 3d cgi, bright sunny daylight, anime, cel-shading, cartoon, lineart:1.90)',
             'strip_pat': r'(?i)\b(?:anime|manga|cel[-\s]?shad(?:ed|ing)|2d\s*illustration|2d\s*painted|cartoon(?:ish)?|comic[-\s]?book|digital\s+painting|fantasy\s+(?:painting|illustration)|concept\s+art|book\s+cover(?:\s+art)?)\b',
             'strip_repl': 'live-action ARRI Alexa 65 grimdark dark-fantasy cinema',
@@ -1053,7 +1340,7 @@ def _sanitize_camera_movement_for_settings(resolved_cam_move: str, resolved_zoom
     return re.sub(r'\s{2,}', ' ', cam_s).strip()
 
 
-def _resolve_qwenvl_system_prompt(master_duration: str, cut_1: str, cut_2: str, style_target: str, camera_zoom: str, lighting_ambient: str, subject_1_age: str, age_difference: str, camera_movement: str, content_rating_mode: str='Uncensored Artistic / Action (Ingen Censur — Följer Prompten)', audio_soundtrack_mode: str='sfx_only', user_scene_input: str='', allow_camera_movement: bool=False, has_reference_image: bool=False):
+def _resolve_qwenvl_system_prompt(master_duration: str, cut_1: str, cut_2: str, style_target: str, camera_zoom: str, lighting_ambient: str, subject_1_age: str, age_difference: str, camera_movement: str, content_rating_mode: str='Uncensored Artistic / Action (Ingen Censur — Följer Prompten)', audio_soundtrack_mode: str='sfx_only', user_scene_input: str='', allow_camera_movement: bool=False, has_reference_image: bool=False, resolved_continuity_mode: str='locked_stage_environment'):
     search_dirs = _get_default_vault_search_dirs()
     pkg_root = search_dirs[0]
     rating_tier = _resolve_content_rating_tier(content_rating_mode, user_scene_input)
@@ -1077,27 +1364,69 @@ def _resolve_qwenvl_system_prompt(master_duration: str, cut_1: str, cut_2: str, 
     max_w_sys = tok_budget_sys['max_words']
     per_shot_w_sys = tok_budget_sys['per_shot_words']
     shot_headers_str = ', '.join((f'[Shot {i}]' for i in range(1, target_shot_count + 1)))
-    continuity_carryover_rule = f'- MULTI-WINDOW CONTINUITY & STATE CARRYOVER ({target_shot_count} CHRONOLOGICAL 5-SECOND SHOTS: {shot_headers_str} | TARGET LENGTH: {min_w_sys}-{max_w_sys} WORDS TOTAL, ~{per_shot_w_sys} WORDS PER SHOT): Write all {target_shot_count} sequential shot sections ({shot_headers_str}) inside BLOCK 2 (1 shot per 5-second continuation window, giving the final [Shot {target_shot_count}] the exact same ~{per_shot_w_sys}-word descriptive richness as [Shot 1]). Every [Shot K] (for K >= 2) MUST begin by explicitly anchoring the exact ending body posture, camera framing, clothing/armor state, and spatial position from the final frame of [Shot K-1] before introducing the next physical progression, ensuring zero sudden pose resets across continuation windows.'
+    cont_mode_sys = str(resolved_continuity_mode or 'locked_stage_environment').strip().lower()
+    if cont_mode_sys == 'hollywood_multi_scene_cuts':
+        master_take_label = 'HOLLYWOOD MULTI-SCENE EDITORIAL SEQUENCE — INTENTIONAL SCENE CUTS BETWEEN ACTS'
+        continuity_carryover_rule = f'- MULTI-SCENE HOLLYWOOD EDITORIAL TIMELINE ({target_shot_count} CHRONOLOGICAL 5-SECOND SHOTS: {shot_headers_str} | TARGET LENGTH: {min_w_sys}-{max_w_sys} WORDS TOTAL, ~{per_shot_w_sys} WORDS PER SHOT): Write all {target_shot_count} sequential shot sections ({shot_headers_str}) inside BLOCK 2, distributing the user prompt\'s chronological story acts across the full {master_duration} timeline. Whenever a new location, environment, or major editorial camera angle cut begins in [Shot K] (K >= 2), prefix that shot body with [SCENE CUT] and describe the new environment, camera framing, and lighting clearly while keeping <Subject 1>\'s exact facial identity, hair, and attire 100% consistent with <Picture 1>.'
+    elif cont_mode_sys == 'continuous_one_shot':
+        master_take_label = 'CONTINUOUS ONE-SHOT LONG TAKE — SEAMLESS CAMERA TRAVERSAL ACROSS EVOLVING SPACES'
+        continuity_carryover_rule = f'- CONTINUOUS ONE-SHOT TRAVERSAL & STATE CARRYOVER ({target_shot_count} CHRONOLOGICAL 5-SECOND SHOTS: {shot_headers_str} | TARGET LENGTH: {min_w_sys}-{max_w_sys} WORDS TOTAL, ~{per_shot_w_sys} WORDS PER SHOT): Write all {target_shot_count} sequential shot sections ({shot_headers_str}) inside BLOCK 2 as one unbroken Steadicam/dolly tracking take with zero hard cuts. Distribute the user prompt\'s spatial journey chronologically from [Shot 1] (initial starting environment of <Picture 1>) through intermediate thresholds/transitions into the destination environment in the later shots, explicitly anchoring the ending position and camera motion of [Shot K-1] at the start of [Shot K].'
+    else:
+        master_take_label = 'SINGLE UNBROKEN CONTINUOUS TAKE — ZERO HARD CUTS'
+        continuity_carryover_rule = f'- MULTI-WINDOW CONTINUITY & STATE CARRYOVER ({target_shot_count} CHRONOLOGICAL 5-SECOND SHOTS: {shot_headers_str} | TARGET LENGTH: {min_w_sys}-{max_w_sys} WORDS TOTAL, ~{per_shot_w_sys} WORDS PER SHOT): Write all {target_shot_count} sequential shot sections ({shot_headers_str}) inside BLOCK 2 (1 shot per 5-second continuation window, giving the final [Shot {target_shot_count}] the exact same ~{per_shot_w_sys}-word descriptive richness as [Shot 1]). Every [Shot K] (for K >= 2) MUST begin by explicitly anchoring the exact ending body posture, camera framing, clothing/armor state, and spatial position from the final frame of [Shot K-1] before introducing the next physical progression, ensuring zero sudden pose resets across continuation windows.'
     morph_sys = _extract_prompt_morphology_profile(user_scene_input)
     has_orc_tusks_sys = bool(morph_sys['has_tusks'])
     wants_face_metal_sys = _has_explicit_facial_metal_request(user_scene_input)
     tusk_silent_note = ' (while keeping the two sharp protruding lower-jaw tusks 100% visible outside the lips)' if has_orc_tusks_sys else ''
     if aud_m == 'sfx_only':
-        audio_directive = f"- MANDATORY AUDIO_SOUNDTRACK_MODE = SFX ONLY (PURE ENVIRONMENTAL FOLEY, SILENT EXPRESSION): In BLOCK 2, keep <Main_Subject 1> silent with zero vocalizations{tusk_silent_note}. Describe ONLY non-vocal physical sound effects (footsteps, material friction, wind, ambient foley) inside [Overall Soundscape]. Completely OMIT [Non-Diegetic Music]."
+        audio_directive = f"- MANDATORY AUDIO_SOUNDTRACK_MODE = SFX ONLY (PURE DIEGETIC FOLEY & NATURAL EXPRESSIONS, NO MUSIC / NO SINGING): In BLOCK 2, preserve all natural facial expressions, breathing, and actions from the user prompt{tusk_silent_note} without unrequested singing or musical score. Describe realistic physical sound effects and environmental foley inside [Overall Soundscape]. Completely OMIT [Non-Diegetic Music]."
     elif aud_m == 'sfx_and_speech':
         audio_directive = f'- MANDATORY AUDIO_SOUNDTRACK_MODE = SFX & NATURAL SPEECH ONLY (MINIMAX H3 <d> DIALOGUE TAG SUPPORT): In BLOCK 2, describe realistic physical sound effects (foley, ambience) and natural spoken dialogue/voice inside [Overall Soundscape] and {shot_headers_str}. Whenever a character speaks dialogue or vocalizes, wrap the spoken line in MiniMax H3 native dialogue tags: <d>[English] (spoken dialogue or vocal expression)</d>. Completely OMIT [Non-Diegetic Music].'
     elif aud_m == 'instrumental_bgm':
-        audio_directive = f"- MANDATORY AUDIO_SOUNDTRACK_MODE = INSTRUMENTAL BACKGROUND MUSIC + SFX (SILENT EXPRESSION): In BLOCK 2, keep <Main_Subject 1> silent with zero vocalizations{tusk_silent_note}. Include realistic foley in [Overall Soundscape] and a purely instrumental cinematic score in [Non-Diegetic Music]."
+        audio_directive = f"- MANDATORY AUDIO_SOUNDTRACK_MODE = INSTRUMENTAL BACKGROUND MUSIC + SFX (NO SINGING LYRICS): In BLOCK 2, preserve all natural facial expressions and physical actions from the user prompt{tusk_silent_note} without unrequested singing lyrics. Include realistic foley in [Overall Soundscape] and a purely instrumental cinematic score in [Non-Diegetic Music]."
     else:
         audio_directive = "- MANDATORY AUDIO_SOUNDTRACK_MODE = BACKGROUND MUSIC WITH VOCALS / LIP-SYNC: In BLOCK 2, include synchronized studio lead vocals and expressive singing in [Overall Soundscape] and [Non-Diegetic Music] with clear mouth and lip articulation."
     eff_zoom_label = 'reference-image-framing' if (has_reference_image and not _has_explicit_prompt_framing_override(user_scene_input)) else camera_zoom
-    cam_zoom_rule = (
-        f"- CAMERA_ZOOM = {eff_zoom_label} ({zoom_desc}) | CAMERA_MOVEMENT = {clean_cam_move} (EXECUTE THIS REQUESTED CAMERA MOVEMENT SMOOTHLY ACROSS THE SINGLE UNBROKEN TAKE WITHOUT HARD JUMP CUTS)"
-        if allow_camera_movement else
-        f"- CAMERA_ZOOM = {eff_zoom_label} ({zoom_desc} — MAINTAIN CONSTANT CAMERA DISTANCE ACROSS ALL SHOTS WITHOUT UNREQUESTED ZOOM-IN, DOLLY-IN, OR JUMP CUTS)\n- CAMERA_MOVEMENT = {clean_cam_move}"
+    if cont_mode_sys == 'hollywood_multi_scene_cuts':
+        cam_zoom_rule = f"- CAMERA_ZOOM = {eff_zoom_label} ({zoom_desc} in Shot 1, with intentional cinematic framing & camera angle evolution across [SCENE CUT] boundaries) | CAMERA_MOVEMENT = {clean_cam_move}"
+        style_env_lock_note = 'LOCK IDENTICAL VISUAL MEDIUM & CHARACTER IDENTITY ACROSS ALL SCENE CUTS WHILE ALLOWING PROMPTED ENVIRONMENT & LIGHTING PROGRESSION'
+    elif cont_mode_sys == 'continuous_one_shot':
+        cam_zoom_rule = f"- CAMERA_ZOOM = {eff_zoom_label} ({zoom_desc}) | CAMERA_MOVEMENT = {clean_cam_move} (EXECUTE CONTINUOUS UNBROKEN CAMERA TRACKING SMOOTHLY AS THE ENVIRONMENT EVOLVES)"
+        style_env_lock_note = 'LOCK IDENTICAL VISUAL MEDIUM & CHARACTER IDENTITY ACROSS THE CONTINUOUS ONE-SHOT JOURNEY WHILE ALLOWING NATURAL SPATIAL & LIGHTING EVOLUTION'
+    else:
+        cam_zoom_rule = (
+            f"- CAMERA_ZOOM = {eff_zoom_label} ({zoom_desc}) | CAMERA_MOVEMENT = {clean_cam_move} (EXECUTE THIS REQUESTED CAMERA MOVEMENT SMOOTHLY ACROSS THE SINGLE UNBROKEN TAKE WITHOUT HARD JUMP CUTS)"
+            if allow_camera_movement else
+            f"- CAMERA_ZOOM = {eff_zoom_label} ({zoom_desc} — MAINTAIN CONSTANT CAMERA DISTANCE ACROSS ALL SHOTS WITHOUT UNREQUESTED ZOOM-IN, DOLLY-IN, OR JUMP CUTS)\n- CAMERA_MOVEMENT = {clean_cam_move}"
+        )
+        style_env_lock_note = 'LOCK IDENTICAL TRANSFORMATION, SHADING, AND LIGHTING ACROSS ALL SHOTS'
+    subj_tax_sys = _detect_subject_taxonomy_and_species_lock(user_scene_input, '', subject_1_age, has_reference_image=has_reference_image)
+    is_non_human_sys = bool(subj_tax_sys['is_non_human'])
+    use_auto_age_sys = bool(subj_tax_sys['use_auto_age_bypass'])
+    age_prof_sys = _build_age_authority_profile(
+        subject_1_age,
+        is_female=True,
+        has_orc_tusks=has_orc_tusks_sys,
+        allow_facial_metal=wants_face_metal_sys,
+        style_target=style_target,
+        tusk_descriptor=morph_sys['feat_desc'],
+        is_non_human=use_auto_age_sys,
+        species_lock_phrase=subj_tax_sys['species_lock_clause'],
     )
-    age_prof_sys = _build_age_authority_profile(subject_1_age, is_female=True, has_orc_tusks=has_orc_tusks_sys, allow_facial_metal=wants_face_metal_sys, style_target=style_target, tusk_descriptor=morph_sys['feat_desc'])
-    runtime_header = f"\n\n[ACTIVE RUNTIME COMPILER PARAMETERS]\n- MASTER_DURATION = {master_duration} (SINGLE UNBROKEN CONTINUOUS TAKE — ZERO HARD CUTS)\n{continuity_carryover_rule}\n- STYLE_TARGET = {style_target} ({style_prof['lead']} — LOCK IDENTICAL TRANSFORMATION, SHADING, AND LIGHTING ACROSS ALL SHOTS)\n{cam_zoom_rule}\n- LIGHTING_AMBIENT = {lighting_ambient} ({light_desc or 'scene-adaptive illumination'})\n- SUBJECT_1_AGE = {subject_1_age} (NODE AGE IS ABSOLUTE LAW OVER PROMPT AND IMAGE)\n- AGE_DIFFERENCE = {age_difference}\n{age_prof_sys['vlm_rule']}\n{rating_directive}\n{style_override_rule}\n{audio_directive}\n- CRITICAL KREA 2 RULE FOR BLOCK 1: Inside BLOCK 1 under [IMAGE], start the very first sentence with the exact STYLE_TARGET medium ({style_target}), framing ({zoom_desc}), and SUBJECT_1_AGE facial morphology ({age_prof_sys['lead_badge']}), incorporate LIGHTING_AMBIENT ({lighting_ambient}), preserve the reference image's exact initial pose in I2I mode (unless the user prompt explicitly requests a different starting pose) or follow the user prompt's pose in T2I mode, and do NOT write '<Subject 1>', 'Subject 1', '(none (single subject))', or raw parameter labels inside BLOCK 1. Use '<Subject 1>' tags ONLY inside BLOCK 2.\n"
+    age_header_line = (
+        '- SUBJECT_TAXONOMY_LOCK = NON-HUMAN / SPECIES-TRUE MORPHOLOGY (DO NOT INVENT HUMAN AGE, HUMAN FACE, OR CLOTHING; NEVER MUTATE SPECIES OR TURN MAMMALS INTO BIRDS)'
+        if is_non_human_sys else (
+            '- SUBJECT_1_AGE = auto_from_prompt_or_ref (FOLLOW EXACT AGE & SPECIES FROM PROMPT OR REFERENCE IMAGE)'
+            if use_auto_age_sys else
+            f'- SUBJECT_1_AGE = {subject_1_age} (NODE AGE IS ABSOLUTE LAW OVER PROMPT AND IMAGE)\n- AGE_DIFFERENCE = {age_difference}'
+        )
+    )
+    b1_morph_note = (
+        f'exact species morphology ({subj_tax_sys["species_lock_clause"] or "faithful to prompt and reference image"})'
+        if use_auto_age_sys else
+        f'SUBJECT_1_AGE facial morphology ({age_prof_sys["lead_badge"]})'
+    )
+    runtime_header = f"\n\n[ACTIVE RUNTIME COMPILER PARAMETERS]\n- MASTER_DURATION = {master_duration} ({master_take_label})\n- SCENE_CONTINUITY_MODE = {cont_mode_sys}\n{continuity_carryover_rule}\n- STYLE_TARGET = {style_target} ({style_prof['lead']} — {style_env_lock_note})\n{cam_zoom_rule}\n- LIGHTING_AMBIENT = {lighting_ambient} ({light_desc or 'scene-adaptive illumination'})\n{age_header_line}\n{age_prof_sys['vlm_rule']}\n{rating_directive}\n{style_override_rule}\n{audio_directive}\n- CRITICAL KREA 2 RULE FOR BLOCK 1: Inside BLOCK 1 under [IMAGE], start the very first sentence with the exact STYLE_TARGET medium ({style_target}), framing ({zoom_desc}), and {b1_morph_note}, incorporate LIGHTING_AMBIENT ({lighting_ambient}), preserve the reference image's exact initial pose and species in I2I mode (unless the user prompt explicitly requests a different starting pose or transformation) or follow the user prompt in T2I mode, and do NOT write '<Subject 1>', 'Subject 1', '(none (single subject))', or raw parameter labels inside BLOCK 1. Use '<Subject 1>' tags ONLY inside BLOCK 2.\n"
     vault = _load_licensed_allan_ballan_vault(search_dirs)
     if vault:
         core_prompt = str(vault.get('system_prompt', '')).strip()
@@ -1109,17 +1438,22 @@ def _resolve_qwenvl_system_prompt(master_duration: str, cut_1: str, cut_2: str, 
             core_prompt = re.sub(r'(?i)\bA\s+dynamic\s+low-angle\s+medium-wide\b', 'A balanced eye-level medium-wide', core_prompt)
             core_prompt = re.sub(r'(?i)\band\s+fortress\s+scale\b', 'and spatial depth', core_prompt)
             core_prompt = re.sub(r'(?i)If\s+interior,\s+enforce\s+chiaroscuro\s+studio\s+lighting\.', 'If interior, preserve natural room illumination and depth.', core_prompt)
-            core_prompt = re.sub(r'(?i)Re-state\s+the\s+character\'s\s+core\s+visual\s+identity\s+and\s+age\s+profile\.\s*Apply\s+ledföljd\s*\([^)]*\)\s*to\s+prohibit\s+duplicate\s+geometry\.', 'Focus 100% of the shot description on seamless action progression, body choreography, facial expression, and natural garment physics.', core_prompt)
+            core_prompt = re.sub(r'(?i)Re-state\s+the\s+character\'s\s+core\s+visual\s+identity\s+and\s+age\s+profile\.\s*Apply\s+ledföljd\s*\([^)]*\)\s*to\s+prohibit\s+duplicate\s+geometry\.', 'Focus 100% of the shot description on seamless action progression, body choreography, expression, and natural surface/garment physics.', core_prompt)
             core_prompt = re.sub(r'(?i)Re-state\s+the\s+character\'s\s+core\s+visual\s+identity\s+and\s+age\s+profile,\s+and\s+enforce\s+rigid\s+skeletal\s+rigging\s+vectors\s*\([^)]*\)\.', 'Focus 100% of the shot description on completing the prompted choreography, posture transitions, and expressive acting with natural physical momentum.', core_prompt)
             if target_shot_count >= 4 and '[Shot 4]' not in core_prompt and '[Constraints]' in core_prompt:
                 extra_shot_blocks = '\n\n'.join((
-                    f'[Shot {s_i}]\nContinuing seamlessly from the final frame of [Shot {s_i - 1}] with zero scene cuts: Execute the next chronological phase of the user-prompted choreography, full-body motion, garment physics, and expressive acting across window {s_i} of {target_shot_count}.'
+                    (
+                        f'[Shot {s_i}]\nAdvancing the chronological multi-scene story into window {s_i} of {target_shot_count} (prefix with [SCENE CUT] if cutting to a new location or camera setup): Describe the new environment, camera framing, and <Subject 1>\'s action while preserving exact subject species and identity.'
+                        if cont_mode_sys == 'hollywood_multi_scene_cuts' else
+                        f'[Shot {s_i}]\nContinuing seamlessly from the final frame of [Shot {s_i - 1}] with zero scene cuts: Execute the next chronological phase of the user-prompted choreography, full-body motion, and expressive acting across window {s_i} of {target_shot_count}.'
+                    )
                     for s_i in range(4, target_shot_count + 1)
                 ))
                 core_prompt = core_prompt.replace('[Constraints]', f'{extra_shot_blocks}\n\n[Constraints]', 1)
-            core_prompt = _apply_age_override_to_text(core_prompt, subject_1_age)
+            if not use_auto_age_sys:
+                core_prompt = _apply_age_override_to_text(core_prompt, subject_1_age)
             redacted_base = core_prompt
-            print(f"[EZ-QWEN3-VL] 🔒 Valid License Verified ({rating_tier.upper()} | Style: {style_target} | Age: {subject_1_age} | Audio: {aud_m} | Shots: {target_shot_count} | MaxTokens: {tok_budget_sys['transformers_max_new_tokens']}/{tok_budget_sys['gguf_max_tokens']}) -> Decrypted allan_ballan_core.enc in RAM.")
+            print(f"[EZ-QWEN3-VL] 🔒 Valid License Verified ({rating_tier.upper()} | Mode: {cont_mode_sys} | Style: {style_target} | Age: {'species_auto' if use_auto_age_sys else subject_1_age} | Audio: {aud_m} | Shots: {target_shot_count} | MaxTokens: {tok_budget_sys['transformers_max_new_tokens']}/{tok_budget_sys['gguf_max_tokens']}) -> Decrypted allan_ballan_core.enc in RAM.")
             return (core_prompt + runtime_header, redacted_base + runtime_header, 'PRO_LICENSED // allan_ballan_core.enc')
     light_bundle = _load_freemium_light_bundle(search_dirs)
     light_text = str(light_bundle.get('prompt_body', '')).strip()
@@ -1136,8 +1470,9 @@ def _resolve_qwenvl_system_prompt(master_duration: str, cut_1: str, cut_2: str, 
             for s_i in range(4, target_shot_count + 1)
         ))
         light_text = light_text.replace('[Constraints]', f'{extra_lt_shots}\n\n[Constraints]', 1)
-    light_runtime = f"\n\n[SCENE SETTINGS]\nDuration: {master_duration} (Cut 1: {cut_1}, Cut 2: {cut_2}) | Target Shots: {target_shot_count} ({shot_headers_str}) | Style: {style_target} | Framing: {camera_zoom} | Lighting: {lighting_ambient} | Subject Age: {subject_1_age} ({age_difference}) | Camera Motion: {camera_movement}\n{continuity_carryover_rule}\n{age_prof_sys['vlm_rule']}\n{rating_directive}\n{style_override_rule}\n{audio_directive}"
-    print(f'[EZ-QWEN3-VL] 🔓 Freemium Community Edition ({rating_tier.upper()} | Age: {subject_1_age} | Audio: {aud_m} | Shots: {target_shot_count}) -> Loaded editable system_prompt_light.txt (multi-window continuation unlocked; upgrade to Pro license + allan_ballan_core.enc for full Allan Ballan Master Compiler).')
+    age_lt_str = 'species-auto' if use_auto_age_sys else f'{subject_1_age} ({age_difference})'
+    light_runtime = f"\n\n[SCENE SETTINGS]\nDuration: {master_duration} (Cut 1: {cut_1}, Cut 2: {cut_2}) | Target Shots: {target_shot_count} ({shot_headers_str}) | Style: {style_target} | Framing: {camera_zoom} | Lighting: {lighting_ambient} | Subject Age: {age_lt_str} | Camera Motion: {camera_movement}\n{continuity_carryover_rule}\n{age_prof_sys['vlm_rule']}\n{rating_directive}\n{style_override_rule}\n{audio_directive}"
+    print(f'[EZ-QWEN3-VL] 🔓 Freemium Community Edition ({rating_tier.upper()} | Age: {age_lt_str} | Audio: {aud_m} | Shots: {target_shot_count}) -> Loaded editable system_prompt_light.txt (multi-window continuation unlocked; upgrade to Pro license + allan_ballan_core.enc for full Allan Ballan Master Compiler).')
     return (light_text + light_runtime, light_text + light_runtime, 'FREEMIUM_COMMUNITY // system_prompt_light.txt')
 
 def discover_dynamic_vlm_models():
@@ -1637,11 +1972,40 @@ def _scrub_nsfw_terms_for_sfw(text_in: str) -> str:
     s = re.sub(r'(?i)\btoo\s+small\s+to\s+cover\s+(?:her|his|their)\s+[^.,;]+', 'providing complete modest coverage', s)
     s = re.sub(r'(?i)\b(?:beautiful\s+and\s+)?sexy\b', 'charismatic and poised', s)
     cleaned = re.sub(
-        r'(?i)\b(?:nude|nudity|naked|topless|bottomless|unclothed|undressed|strip(?:ping|ped)?|nipples?|areolas?|breasts?|boobs?|tits?|cleavage|underboob|sideboob|lingerie|bikini|thong|panties|underwear|bra|corset|sheer|see[-\s]?through|translucent|revealing|plunging|seductive|sensual|erotic|intimate|nsfw|sex|sexual|intercourse|orgasm|climax|moan(?:ing|s)?|groan(?:ing|s)?|pelvis|pelvic|groin|genitals?|genitalia|pussy|vagina|labia|vulva|penis|dick|cock|erection|testicles?|balls|anus|anal|ass|buttocks|booty|cum|semen|sperm|milky\s+liquid|aroused|lust(?:ful)?|lewd|horny|explicit|skimpy|scantily\s+clad|bare\s+(?:skin|chest|breasts?|torso|midriff|hips?|thighs?|buttocks|back))\b',
+        r'(?i)\b(?:nude|nudity|naked|topless|bottomless|unclothed|undressed|strip(?:ping|ped)?|nipples?|areolas?|breasts?|boobs?|tits?|cleavage|underboob|sideboob|lingerie|bikini|thong|panties|underwear|bra|corset|sheer|see[-\s]?through|translucent|revealing|plunging|seductive|sensual|erotic|intimate|nsfw|sex|sexual|intercourse|orgasm|climax|moan(?:ing|s)?|groan(?:ing|s)?|pelvis|pelvic|groin|genitals?|genitalia|pussy|vagina|labia|vulva|penis|dick|cock|erection|testicles?|balls|anus|anal|ass|buttocks|booty|cum|semen|sperm|milky\s+liquid|aroused|lustful|lust(?!\s+for\s+(?:life|living|power|battle|adventure|glory|knowledge|freedom|victory|gold|speed)\b)|lewd|horny|explicit|skimpy|scantily\s+clad|bare\s+(?:skin|chest|breasts?|torso|midriff|hips?|thighs?|buttocks|back))\b',
         cov_repl,
         s,
     )
     return re.sub(rf'(?:{re.escape(cov_repl)}[\s,]*){{2,}}', f'{cov_repl} ', cleaned).strip()
+
+
+def _reconcile_custom_negative_style_collision(custom_neg_str: str, resolved_style: str, style_neg_lead: str) -> str:
+    c_str = str(custom_neg_str or '').strip()
+    if not c_str:
+        return ''
+    st_low = str(resolved_style or '').strip().lower()
+    conflict_map = {
+        'semi-real': r'(?i)\b(?:semi[-\s]?realistic|stylized\s+3d|arcane\s+style|blizzard\s+style|video\s+game\s+cgi)\b',
+        'anime': r'(?i)\b(?:anime|manga|cel[-\s]?shading|2d\s+illustration)\b',
+        'cartoonish': r'(?i)\b(?:cartoon(?:ish)?|flat\s+2d\s+cartoon|cel[-\s]?shading)\b',
+        'realism': r'(?i)\b(?:raw\s+candid\s+photograph|live[-\s]?action\s+photograph|arri\s+alexa\s+live[-\s]?action|photorealistic,\s*semi[-\s]?realistic,\s*2\.5d)\b',
+    }
+    pat = conflict_map.get(st_low)
+    if not pat or not re.search(pat, c_str):
+        return c_str
+    def _strip_colliding_paren_group(match_obj) -> str:
+        grp = match_obj.group(0)
+        if re.search(pat, grp):
+            return f'{style_neg_lead}, ' if style_neg_lead else ''
+        return grp
+    healed = re.sub(r'\([^()]*:1\.\d+\)\s*,?\s*', _strip_colliding_paren_group, c_str)
+    if healed == c_str:
+        healed = re.sub(rf'{pat}\s*,?\s*', '', c_str)
+        if style_neg_lead and style_neg_lead[:24].lower() not in healed.lower():
+            healed = f'{style_neg_lead}, {healed}'
+    healed = re.sub(r'(?:,\s*){2,}', ', ', healed).strip().strip(',').strip()
+    return healed
+
 
 
 def _parse_subject_age_years(resolved_age: str) -> int:
@@ -1686,8 +2050,22 @@ def _scrub_unrequested_facial_metal(text_in: str, user_scene_input: str = '') ->
     return s
 
 
-def _build_age_authority_profile(resolved_age: str, is_female: bool = True, has_orc_tusks: bool = False, allow_facial_metal: bool = False, style_target: str = 'original', tusk_descriptor: str = '') -> dict:
+def _build_age_authority_profile(resolved_age: str, is_female: bool = True, has_orc_tusks: bool = False, allow_facial_metal: bool = False, style_target: str = 'original', tusk_descriptor: str = '', is_non_human: bool = False, species_lock_phrase: str = '', user_scene_input: str = '') -> dict:
     age_s = str(resolved_age or '25-year-old').strip()
+    if user_scene_input and not is_non_human:
+        _sp_auto = _detect_subject_taxonomy_and_species_lock(user_scene_input, '', age_s)
+        if _sp_auto['use_auto_age_bypass']:
+            is_non_human = True
+            if not species_lock_phrase:
+                species_lock_phrase = _sp_auto['species_lock_clause']
+    if is_non_human or not age_s or age_s.lower().startswith('auto'):
+        spec_id = str(species_lock_phrase or '').strip() or 'preserving exact subject morphology, natural surface texture, and authentic proportions'
+        vlm_auto = (
+            f'- SUBJECT MORPHOLOGY & TAXONOMY LOCK: Preserve <Subject 1> ({spec_id}) strictly from the prompt and reference image without inventing human age labels, human facial features, or clothing.'
+            if species_lock_phrase else
+            '- SUBJECT AGE & MORPHOLOGY: Follow the exact age, species, and morphology of <Subject 1> from the prompt and reference image without forced age overrides.'
+        )
+        return {'age_label': '', 'age_years': 25, 'lead_badge': '', 'face_id_phrase': spec_id, 'vlm_rule': vlm_auto, 'neg_tokens': ''}
     if re.fullmatch(r'\d{1,2}', age_s):
         age_s = f'{age_s}-year-old'
     yrs = _parse_subject_age_years(age_s)
@@ -1754,16 +2132,16 @@ def _build_age_authority_profile(resolved_age: str, is_female: bool = True, has_
     return {'age_label': age_s, 'age_years': yrs, 'lead_badge': lead, 'face_id_phrase': face_id, 'vlm_rule': vlm, 'neg_tokens': neg}
 
 
-def _apply_age_override_to_text(text_in: str, resolved_age: str) -> str:
+def _apply_age_override_to_text(text_in: str, resolved_age: str, is_non_human: bool = False) -> str:
     txt = str(text_in or '')
     age_s = str(resolved_age or '').strip()
-    if not age_s:
+    if is_non_human or not age_s or age_s.lower().startswith('auto'):
         return txt
     if re.fullmatch(r'\d{1,2}', age_s):
         age_s = f'{age_s}-year-old'
     yrs = _parse_subject_age_years(age_s)
     has_second_char = bool(
-        re.search(r'(?i)(?:<\s*subject\s*2\s*>|\bcharacter\s*2\b|\bon\s+the\s+right\b|\binterviewing\b|\bgoblin\b|\bsenator\b)', txt)
+        re.search(r'(?i)(?:<\s*(?:main[_\s-]*)?subject\s*[2-9]\s*>|\bcharacter\s*[2-9]\b|\bon\s+the\s+right\b|\binterviewing\b|\btwo[-\s]?shot\b)', txt)
     )
     if has_second_char:
         return txt
@@ -1793,59 +2171,96 @@ def _scrub_unrequested_genital_hallucinations(text_in: str, user_scene_input: st
     return s
 
 
-def _scrub_sfx_vocal_triggers(text_in: str) -> str:
+def _scrub_sfx_vocal_triggers(text_in: str, user_scene_input: str = '') -> str:
     s = str(text_in or '')
-    has_tusk_ctx = bool(_extract_prompt_morphology_profile(s)['has_tusks'])
-    s = re.sub(
-        r'(?i)\b(?:starts?\s+praying\s+to|praying\s+to|prays?\s+to)\b',
-        'stands tall and upright holding in silent focus',
-        s,
-    )
-    s = re.sub(
-        r'(?i)\b(?:praying(?:\s+aloud|\s+fervently|\s+silently)?|prays?|prayer|chanting|chants?|intoning|reciting|uttering|muttering|speaking|speaks?|spoken\s+words?|calling\s+out|invoking)\b',
-        'holding a silent upright posture',
-        s,
-    )
-    s = re.sub(
-        r'(?i)\b(?:with\s+)?(?:heavy\s+breathing|breathing\s+heavily|ragged\s+breathing|labored\s+breathing|audible\s+breathing|panting(?:\s+heavily)?|gasping(?:\s+for\s+air)?|groaning|groans|grunting|grunts|moaning|moans|sighing|vocal\s+sighs|sighs|roaring|roars|screaming|screams|shouting|shouts|yelling|battle\s+cry|war\s+cry|mumbling|talking|whispering|whispers)\b',
-        'silent focused intensity and crisp physical foley',
-        s,
-    )
-    mouth_repl = (
-        'focused silent expression with two sharp protruding white lower-jaw tusks clearly visible outside the lips'
-        if has_tusk_ctx else
-        'firmly closed mouth and focused silent expression'
-    )
-    s = re.sub(
-        r'(?i)\b(?:parted\s+lips|open\s+mouth|mouth\s+open(?:\s+wide)?|jaw\s+dropped|lips\s+parted|lips\s+moving)\b',
-        mouth_repl,
-        s,
-    )
+    if not s:
+        return ''
+    u_low = str(user_scene_input or '').lower()
+    if not any(w in u_low for w in ('sing', 'song', 'choir', 'lyrics', 'chant', 'ballad', 'opera', 'sjung', 'sång')):
+        s = re.sub(
+            r'(?i)\b(?:singing\s+(?:a\s+song|lyrics|melodiously|aloud)|song\s+lyrics|operatic\s+vocals|backing\s+choir|a\s+cappella\s+vocals)\b',
+            'natural ambient acoustics',
+            s,
+        )
+    if bool(_extract_prompt_morphology_profile(s)['has_tusks']):
+        s = re.sub(
+            r'(?i)\b(?:firmly\s+closed\s+mouth|tightly\s+closed\s+lips|sealed\s+lips)\b',
+            'natural expression with two sharp protruding white lower-jaw tusks clearly visible outside the lips',
+            s,
+        )
     return s
 
 
-def _extract_shot_carryover_state(shot_text: str, shot_idx: int, resolved_zoom: str, safe_cam_move: str, allow_camera_movement: bool) -> str:
+def _extract_shot_carryover_state(shot_text: str, shot_idx: int, resolved_zoom: str, safe_cam_move: str, allow_camera_movement: bool, continuity_mode: str = 'locked_stage_environment', is_scene_cut: bool = False) -> str:
+    if continuity_mode == 'hollywood_multi_scene_cuts' and is_scene_cut:
+        return '[SCENE CUT] Cutting cleanly to the next cinematic camera setup while preserving <Subject 1>\'s exact identity and morphology from <Picture 1>, '
     s_clean = re.sub(r'\s+', ' ', str(shot_text or '')).strip()
     if not s_clean:
         return ''
-    sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', s_clean) if s.strip() and not re.search(r'(?i)^(?:Locked\s+to|Captured\s+with|<Subject\s*1>\s+preserves)', s.strip())]
-    last_action = sents[-1] if sents else s_clean[:180]
-    last_action = re.sub(r'(?i)^(?:Continuing\s+seamlessly\s+from\s+the\s+final\s+frame\s+of\s+Shot\s+\d+[^,]*,\s*|From\s+this\s+exact\s+held\s+posture,\s*)', '', last_action).strip()
-    if len(last_action) > 165:
-        last_action = last_action[:165].rsplit(' ', 1)[0].rstrip('.,;:') + '.'
+    s_clean = re.sub(r'(?i)\[\s*SCENE[\s_-]*CUT\s*\]\s*', '', s_clean).strip()
+    for _ in range(4):
+        next_s = re.sub(
+            r'(?i)^(?:Continuing\s+seamlessly\s+from\s+the\s+final\s+frame\s+of\s+Shot\s+\d+\s*(?:\([^)]*\))?\s*,?\s*|Cutting\s+cleanly\s+to\s+the\s+next\s+cinematic\s+camera\s+setup[^,]*,\s*|Cutting\s+to\s+a\s+new\s+cinematic\s+(?:angle|setup)[^:,\n]*[:,\s]+|From\s+this\s+exact\s+held\s+posture,\s*)',
+            '',
+            s_clean,
+        ).strip()
+        if next_s == s_clean:
+            break
+        s_clean = next_s
+    sents = [
+        s.strip()
+        for s in re.split(r'(?<=[.!?])\s+', s_clean)
+        if s.strip() and not re.search(r'(?i)^(?:Locked\s+to|Captured\s+with|Filmed\s+with|<Subject\s*\d+>\s+(?:preserves|keeps\s+a\s+focused)|Maintaining\s+the\s+exact\s+room)', s.strip())
+    ]
+    last_action = sents[-1] if sents else s_clean[:140]
+    last_action = re.sub(r'(?i)^Cutting\s+to\s+a\s+new\s+cinematic\s+(?:angle|setup)[^:,\n]*[:,\s]+', '', last_action).strip()
+    last_action = re.sub(r'(?i)\(\s*\d{1,2}-year-old[^)]*\)', '', last_action)
+    last_action = re.sub(r'(?i)<\s*(?:main[_\s-]*)?subject\s*\d+\s*>', 'the protagonist', last_action)
+    last_action = last_action.replace('(', '').replace(')', '')
+    last_action = re.sub(r'\s{2,}', ' ', last_action).strip(' ,;:-.')
+    if len(last_action) > 115:
+        last_action = last_action[:115].rsplit(' ', 1)[0].strip(' ,;:-.')
+    last_action = re.sub(
+        r'(?i)(?:[\s,;:\-]+(?:with|and|or|while|as|into|from|of|the|a|an|her|his|their|in|on|at|to|by|across|window|\d+|<subject\s*\d*>))+$',
+        '',
+        last_action,
+    ).strip(' ,;:-.')
+    if len(last_action) < 8:
+        last_action = 'the active performance and spatial momentum'
     cam_state = f'continuing the {safe_cam_move}' if allow_camera_movement else f'holding the exact {resolved_zoom} camera distance'
-    return f'Continuing seamlessly from the final frame of Shot {shot_idx} ({cam_state} following: {last_action.rstrip(".")}), '
+    return f'Continuing seamlessly from the final frame of Shot {shot_idx} ({cam_state} following {last_action}), '
 
 
-def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolved_age: str, age_diff_phrase: str, resolved_zoom: str, resolved_lighting: str, resolved_cam_move: str, aesthetic_rule: str, resolved_duration: str, cut_1: str, cut_2: str, resolved_style: str='realism', is_nsfw: bool=True, resolved_audio_mode: str='sfx_only', rating_tier: str='uncensored_action', allow_camera_movement: bool=False, resolved_stance: str='', background_extras_crowd: str='', slot2_is_dual_subject: bool=False, has_reference_image: bool=False):
-    raw_txt = str(compiled_raw or '').replace('```', '').strip()
-    clean_in = _apply_age_override_to_text(clean_in, resolved_age)
-    raw_txt = _apply_age_override_to_text(raw_txt, resolved_age)
+def _scrub_leaked_compiler_meta_directives(text_in: str) -> str:
+    s = str(text_in or '')
+    if not s:
+        return ''
+    s = re.sub(r'(?is)\[\s*ACTIVE\s+RUNTIME\s+COMPILER\s+PARAMETERS\s*\][\s\S]*$', '', s)
+    s = re.sub(r'(?im)^\s*-\s*(?:MASTER_DURATION|SCENE_CONTINUITY_MODE|MULTI-WINDOW\s+CONTINUITY|MULTI-SCENE\s+HOLLYWOOD|CONTINUOUS\s+ONE-SHOT|STYLE_TARGET|CAMERA_ZOOM|CAMERA_MOVEMENT|LIGHTING_MODE|AUDIO_MODE|SUBJECT_1_AGE)\b[^\n]*$', '', s)
+    s = re.sub(r'(?is)-?\s*MULTI-WINDOW\s+CONTINUITY\s*&\s*STATE\s+CARRYOVER\s*\([^)]*?WORDS\s+PER\s+SHOT\)\s*:\s*Write\s+all\s+\d+\s+sequential\s+shot\s+sections.*?continuation\s+windows\.?', '', s)
+    s = re.sub(r'(?is)\|\s*TARGET\s+LENGTH\s*:\s*\d+\s*-\s*\d+\s*WORDS\s+TOTAL[^.\n]*?(?:descriptive\s+richness(?:\s+as\s+\[Shot\s*1\])?\)?\.?|[\n])', ' ', s)
+    s = re.sub(r'(?is)Every\s+\[\s*Shot\s*K\s*\][^\n]*?continuation\s+windows\.?', ' ', s)
+    s = re.sub(r'(?is)-\s*STYLE_TARGET\s*=\s*[^\n]*?CAMERA_ZOOM\s*=\s*[a-zA-Z0-9_\-]+\.?', ' ', s)
+    s = re.sub(r'(?i)—\s*LOCK\s+IDENTICAL\s+TRANSFORMATION,\s*SHADING,\s*AND\s+LIGHTING\s+ACROSS\s+ALL\s+SHOTS\)?', ' ', s)
+    s = re.sub(r'(?:\(\s*(?:,\s*)*\)|(?:\s*,\s*){2,}\)\s*\.?)', ' ', s)
+    return re.sub(r'[ \t]{2,}', ' ', s).strip()
+
+
+def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolved_age: str, age_diff_phrase: str, resolved_zoom: str, resolved_lighting: str, resolved_cam_move: str, aesthetic_rule: str, resolved_duration: str, cut_1: str, cut_2: str, resolved_style: str='realism', is_nsfw: bool=True, resolved_audio_mode: str='sfx_only', rating_tier: str='uncensored_action', allow_camera_movement: bool=False, resolved_stance: str='', background_extras_crowd: str='', slot2_is_dual_subject: bool=False, has_reference_image: bool=False, resolved_continuity_mode: str='locked_stage_environment'):
+    raw_txt = _scrub_leaked_compiler_meta_directives(str(compiled_raw or '').replace('```', '').strip())
+    subj_tax_norm = _detect_subject_taxonomy_and_species_lock(clean_in, raw_txt, resolved_age, has_reference_image=has_reference_image)
+    is_non_human_norm = bool(subj_tax_norm['is_non_human'])
+    use_auto_age_norm = bool(subj_tax_norm['use_auto_age_bypass'])
+    clean_in = _apply_age_override_to_text(clean_in, resolved_age, is_non_human=use_auto_age_norm)
+    raw_txt = _apply_age_override_to_text(raw_txt, resolved_age, is_non_human=use_auto_age_norm)
+    if is_non_human_norm:
+        if not bool(re.search(r'(?i)\b\d{1,2}[-\s]?(?:year|yr)s?[-\s]?old\b', clean_in)):
+            raw_txt = re.sub(r'(?i)\b\d{1,2}[-\s]?(?:year|yr)s?[-\s]?old\s+', '', raw_txt)
+        if (not subj_tax_norm['is_avian']) and (not subj_tax_norm['allows_metamorphosis']) and subj_tax_norm['matched_species']:
+            raw_txt = _SUBJECT_AVIAN_REGEX.sub(subj_tax_norm['matched_species'], raw_txt)
     if not is_nsfw or rating_tier == 'sfw':
         raw_txt = _scrub_nsfw_terms_for_sfw(raw_txt)
         clean_in = _scrub_nsfw_terms_for_sfw(clean_in)
-    elif rating_tier == 'uncensored_action':
-        raw_txt = _scrub_unrequested_genital_hallucinations(raw_txt, clean_in)
     if re.search(r'(?i)Continuity\s+part\s*#\s*\d+', clean_in):
         structured_b2 = clean_in.strip()
         m_first_shot = re.search(r'(?i)\[Shot\s*1\]\s*([^\n]+)', structured_b2)
@@ -1871,13 +2286,17 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
     raw_txt = re.sub('(?i)\\[\\s*Non-Diegetic\\s+Music[^\\]\\n]*\\][\\s:*#\\-]*', '\n[Non-Diegetic Music]\n', raw_txt)
     raw_txt = re.sub('(?im)^\\s*[#*\\-\\s]*Non-Diegetic\\s+Music\\s*(?:[:\\-]+\\s*|\\s*$)', '[Non-Diegetic Music]\n', raw_txt)
     style_low = str(resolved_style or 'realism').strip().lower()
+    cont_mode_norm = str(resolved_continuity_mode or 'locked_stage_environment').strip().lower()
+    is_dynamic_env_mode = cont_mode_norm in ('continuous_one_shot', 'hollywood_multi_scene_cuts')
+    if is_dynamic_env_mode:
+        allow_camera_movement = True
     style_prof = _get_style_compiler_profile(resolved_style, clean_in)
     style_lead = style_prof['lead']
     style_tail = style_prof['tail']
     video_style_lead = style_prof['video_lead']
     (zoom_desc, light_desc) = _get_zoom_and_lighting_specs(resolved_zoom, resolved_lighting, style_low, user_scene_input=clean_in, background_extras_crowd=background_extras_crowd, has_reference_image=has_reference_image)
     resolved_cam_move = _sanitize_camera_movement_for_settings(resolved_cam_move, resolved_zoom, style_low, allow_camera_movement=allow_camera_movement, user_scene_input=clean_in, background_extras_crowd=background_extras_crowd)
-    is_indoor_scene = bool(
+    is_indoor_scene = (not is_dynamic_env_mode) and bool(
         re.search(r'(?i)\b(?:studio|news\s+desk|broadcast|indoor|indoors|interior|room|office|tavern|bar|cockpit|interview(?:ing)?|anchor|teleprompter|desk)\b', clean_in)
     ) and not bool(re.search(r'(?i)\b(?:wind|windy|breeze|storm|gale|blizzard|gusts?)\b', clean_in))
     cast_norm_info = _analyze_scene_cast_and_extras(clean_in, resolved_stance, background_extras_crowd, slot2_is_dual_subject=slot2_is_dual_subject, age_difference=(age_diff_phrase or 'none (single subject)'))
@@ -1888,18 +2307,27 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
         '',
         clean_in_no_suno,
     ).strip() or clean_in
+    narrative_beat_plan = _split_general_narrative_beats(clean_in_no_suno, num_target_shots, cont_mode_norm)
     in_paras = [p.strip() for p in re.split(r'\n\s*\n', clean_in_no_suno) if p.strip()]
     action_marker_pat = r'(?i)(?:^\s*(?:a\s+sequence\s+starting|at\s+the\s+midpoint|from\s+00:|at\s+00:|in\s+shot\s+\d|then\s+she|then\s+he|suddenly\s+she|suddenly\s+he)|\b(?:midpoint\s+of\s+the\s+sequence|initiates\s+a\s+sudden|explosively\s+swinging|slams\s+violently)\b)'
     static_paras = [p for p in in_paras if not re.search(action_marker_pat, p)]
     action_paras = [p for p in in_paras if re.search(action_marker_pat, p)]
-    static_clean_in = ' '.join(static_paras).strip() if static_paras else (in_paras[0] if in_paras else clean_in_no_suno)
+    if is_dynamic_env_mode and narrative_beat_plan:
+        static_clean_in = narrative_beat_plan[0]['text']
+    else:
+        static_clean_in = ' '.join(static_paras).strip() if static_paras else (in_paras[0] if in_paras else clean_in_no_suno)
     morph_norm = _extract_prompt_morphology_profile(clean_in_no_suno)
     has_orc_tusks_norm = bool(morph_norm['has_tusks'])
     wants_face_metal_norm = _has_explicit_facial_metal_request(clean_in)
-    age_prof = _build_age_authority_profile(resolved_age, is_female=True, has_orc_tusks=has_orc_tusks_norm, allow_facial_metal=wants_face_metal_norm, style_target=resolved_style, tusk_descriptor=morph_norm['feat_desc'])
+    age_prof = _build_age_authority_profile(resolved_age, is_female=True, has_orc_tusks=has_orc_tusks_norm, allow_facial_metal=wants_face_metal_norm, style_target=resolved_style, tusk_descriptor=morph_norm['feat_desc'], is_non_human=use_auto_age_norm, species_lock_phrase=subj_tax_norm['species_lock_clause'])
     age_lead_badge = age_prof['lead_badge']
     light_sentence = f' Illuminated by {light_desc}.' if light_desc else ''
-    default_b1 = f'{style_lead} {zoom_desc}. {age_lead_badge} {static_clean_in} Depicted strictly as a {age_prof["age_label"]} character{age_diff_phrase}.{light_sentence} {style_tail} Full-bleed edge-to-edge composition.'
+    if age_prof['age_label']:
+        default_b1 = f'{style_lead} {zoom_desc}. {age_lead_badge} {static_clean_in} Depicted strictly as a {age_prof["age_label"]} character{age_diff_phrase}.{light_sentence} {style_tail} Full-bleed edge-to-edge composition.'
+    else:
+        spec_clause_b1 = subj_tax_norm.get('species_lock_clause') or ''
+        spec_sent_b1 = f' {spec_clause_b1[0].upper() + spec_clause_b1[1:]}.' if spec_clause_b1 else ''
+        default_b1 = f'{style_lead} {zoom_desc}. {static_clean_in}{spec_sent_b1}{light_sentence} {style_tail} Full-bleed edge-to-edge composition.'
     if 'BLOCK 2' in raw_txt:
         (p1, p2) = raw_txt.split('BLOCK 2', 1)
     elif '[Shot 1]' in raw_txt:
@@ -1918,8 +2346,8 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
         b1 = re.sub(r'(?i)\b(?:main[_\s-]*subject|character)\s*[2-9]\b\s*[:,;\-]?\s*', '', b1)
     b1 = re.sub('\\(none\\s*\\(single\\s*subject\\)\\)', '', b1, flags=re.IGNORECASE)
     b1 = re.sub('\\(modern\\s*cinematic\\s*cgi\\)', 'modern cinematic CGI', b1, flags=re.IGNORECASE)
-    b1 = _apply_age_override_to_text(b1, age_prof['age_label'])
-    p2 = _apply_age_override_to_text(p2, age_prof['age_label'])
+    b1 = _apply_age_override_to_text(b1, age_prof['age_label'], is_non_human=use_auto_age_norm)
+    p2 = _apply_age_override_to_text(p2, age_prof['age_label'], is_non_human=use_auto_age_norm)
     if style_prof.get('strip_pat'):
         b1 = re.sub(style_prof['strip_pat'], style_prof['strip_repl'], b1)
         p2 = re.sub(style_prof['strip_pat'], style_prof['strip_repl'], p2)
@@ -1940,8 +2368,9 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
             b1 = re.sub(r'(?i)\b(?:extreme\s+wide[-\s]?angle|wide[-\s]?shot|full[-\s]?body\s+wide)\b', resolved_zoom, b1)
     if is_indoor_scene:
         indoor_wind_pat = r'(?i)\b(?:wind[-\s]?swept\s+hair(?:\s+motion|\s+movement)?|hair\s+blowing\s+in\s+the\s+wind|blowing\s+in\s+the\s+(?:cold\s+|icy\s+)?wind|fluid\s+hair\s+motion\s+in\s+the\s+wind|in\s+the\s+howling\s+wind|cold\s+wind\s+gusts|howling\s+wind\s+gusts)\b'
-        b1 = re.sub(indoor_wind_pat, 'calm indoor studio air with naturally settled hair', b1)
-        p2 = re.sub(indoor_wind_pat, 'calm indoor studio air with naturally settled hair', p2)
+        indoor_air_repl = 'calm indoor air' if is_non_human_norm else 'calm indoor studio air with naturally settled hair'
+        b1 = re.sub(indoor_wind_pat, indoor_air_repl, b1)
+        p2 = re.sub(indoor_wind_pat, indoor_air_repl, p2)
     b1 = re.sub('\\s{2,}', ' ', b1).strip()
     if cast_norm_info['cast_b1_injection'] and 'never a twin or clone' not in b1.lower():
         b1 = f"{b1.rstrip('. ')}. {cast_norm_info['cast_b1_injection']}"
@@ -1963,10 +2392,10 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
                 b1 = f'Featuring {feat_norm}. {b1}'.strip()
         b1_scene_core = str(b1).strip()
         if cast_norm_info['has_multi_main_cast']:
-            s1_hdr = cast_norm_info.get('subj1_summary') or f"{age_prof['age_label']} primary protagonist"
-            if age_prof['age_label'].lower() not in s1_hdr.lower():
+            s1_hdr = cast_norm_info.get('subj1_summary') or (f"{age_prof['age_label']} primary protagonist" if age_prof['age_label'] else 'primary protagonist')
+            if age_prof['age_label'] and age_prof['age_label'].lower() not in s1_hdr.lower():
                 s1_hdr = f"{age_prof['age_label']} {s1_hdr}"
-            s2_hdr = cast_norm_info.get('subj2_summary') or 'distinct second main character with their own individual facial identity and attire as described in the prompt'
+            s2_hdr = cast_norm_info.get('subj2_summary') or 'distinct second main character with their own individual identity and attributes as described in the prompt'
             extra_m_hdr = (
                 '; ' + '; '.join([f"{m['tag']} ({m['desc']})" for m in cast_norm_info.get('main_subjects', [])[2:]])
                 if len(cast_norm_info.get('main_subjects', [])) > 2 else ''
@@ -1979,7 +2408,7 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
             clip77_lead = (
                 f"{multi_med_lead} with {cast_norm_info['main_cast_count']} distinct main subjects: "
                 f"ON THE LEFT is <Main_Subject 1> ({s1_hdr}); "
-                f"ON THE RIGHT is <Main_Subject 2> ({s2_hdr}, a separate individual with their own facial identity and attributes from the prompt — never a cloned twin of <Main_Subject 1>){extra_m_hdr}.{active_ex_hdr}"
+                f"ON THE RIGHT is <Main_Subject 2> ({s2_hdr}, a separate individual with their own distinct identity and attributes from the prompt — never a cloned twin of <Main_Subject 1>){extra_m_hdr}.{active_ex_hdr}"
             )
             tail_parts = []
             if light_desc and str(resolved_lighting).lower() not in b1.lower():
@@ -1991,12 +2420,18 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
                 ' Active background extras: ' + ', '.join([f"{e['tag']} ({e['desc']})" for e in cast_norm_info.get('active_subjects', [])]) + '.'
                 if cast_norm_info.get('active_subjects') else ''
             )
-            tail_parts = [f'Strictly depicted as a {age_prof["age_label"]} character ({age_prof["face_id_phrase"].rstrip(",")}){age_diff_phrase}']
+            tail_parts = []
+            if age_prof['age_label']:
+                tail_parts.append(f'Strictly depicted as a {age_prof["age_label"]} character ({age_prof["face_id_phrase"].rstrip(",")}){age_diff_phrase}')
+            elif subj_tax_norm.get('species_lock_clause') and subj_tax_norm['species_lock_clause'][:24].lower() not in b1.lower():
+                spec_c = subj_tax_norm['species_lock_clause']
+                tail_parts.append(spec_c[0].upper() + spec_c[1:])
             if light_desc and str(resolved_lighting).lower() not in b1.lower():
                 tail_parts.append(f'illuminated by {light_desc}')
             tail_clause = ('. '.join(tail_parts) + '.') if tail_parts else ''
             lead_prefix = f'{style_lead} ' if style_lead else ''
-            b1 = f'{lead_prefix}{zoom_desc}. {age_lead_badge} {b1}{active_ex_hdr} {tail_clause} {style_tail}'.strip()
+            age_badge_part = f'{age_lead_badge} ' if age_lead_badge else ''
+            b1 = f'{lead_prefix}{zoom_desc}. {age_badge_part}{b1}{active_ex_hdr} {tail_clause} {style_tail}'.strip()
         b1 = re.sub(r'\s{2,}', ' ', b1)
     static_summary = re.sub(r'\s+', ' ', static_clean_in).strip()
     if len(static_summary) > 680:
@@ -2006,13 +2441,19 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
     if b1_core_desc and len(b1_core_desc) > 20:
         b1_first_sent = re.split(r'(?<=[.!?])\s+', b1_core_desc)[0].strip()
         if b1_first_sent and b1_first_sent[:32].lower() not in static_summary.lower():
-            static_summary = f'{static_summary.rstrip(". ")}. Visual & environment lock from <Picture 1>: {b1_first_sent.rstrip(". ")}, keeping the exact same room background and exact outfit without adding unrequested skirts or swapping rooms.'
+            if is_non_human_norm:
+                static_summary = f'{static_summary.rstrip(". ")}. Subject morphology anchor from <Picture 1>: {b1_first_sent.rstrip(". ")}, preserving exact species morphology and natural surface details.'
+            elif is_dynamic_env_mode:
+                static_summary = f'{static_summary.rstrip(". ")}. Character identity anchor from <Picture 1>: {b1_first_sent.rstrip(". ")}, preserving exact facial features across evolving environments.'
+            else:
+                static_summary = f'{static_summary.rstrip(". ")}. Visual anchor from <Picture 1>: {b1_first_sent.rstrip(". ")}, preserving character identity and scene continuity.'
     if cast_norm_info['cast_b1_injection'] and 'never a twin or clone' not in static_summary.lower():
         static_summary = f"{static_summary.rstrip('. ')}. {cast_norm_info['cast_b1_injection']}"
     if cast_norm_info['has_multi_main_cast']:
         visual_anchor = f"{video_style_lead} {zoom_desc}. {cast_norm_info.get('clip77_split_header', '')} {static_summary}".strip()
     else:
-        visual_anchor = f'{video_style_lead} {zoom_desc}. {age_lead_badge} {static_summary}'.strip()
+        age_va_part = f'{age_lead_badge} ' if age_lead_badge else ''
+        visual_anchor = f'{video_style_lead} {zoom_desc}. {age_va_part}{static_summary}'.strip()
     sec_order = shot_keys + ['[Constraints]', '[Overall Soundscape]', '[Non-Diegetic Music]']
     sec_map = {}
     shot_or_pat = '|'.join((f'Shot\\s*{i}\\b' for i in range(1, num_target_shots + 1)))
@@ -2065,7 +2506,10 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
                 raw_st = raw_st + '.'
             sec_map[shot_k] = raw_st
     light_clause = f' under {resolved_lighting} lighting' if str(resolved_lighting).lower() not in ('auto', '') else ''
-    if allow_camera_movement:
+    if cont_mode_norm == 'hollywood_multi_scene_cuts':
+        safe_cam_move = str(resolved_cam_move or 'cinematic anamorphic tracking and multi-angle editorial framing')
+        shot_setting_lock = f'Filmed with {safe_cam_move}{light_clause} in {resolved_style} aesthetic.'
+    elif allow_camera_movement:
         safe_cam_move = str(resolved_cam_move or 'smooth cinematic camera movement')
         shot_setting_lock = f'Captured with {safe_cam_move}{light_clause} in {resolved_style} aesthetic.'
     else:
@@ -2074,16 +2518,50 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
             'holding the exact camera angle and framing distance of <Picture 1> with zero scene cuts',
             str(resolved_cam_move or ''),
         )
-        shot_setting_lock = f'Locked to the exact background room, outfit, and {resolved_zoom} framing of <Picture 1>{light_clause} in {resolved_style} aesthetic.'
+        shot_setting_lock = f'Locked to the scene continuity and {resolved_zoom} framing of <Picture 1>{light_clause} in {resolved_style} aesthetic.'
+    subj1_tag_norm = f'<Subject 1> ({age_prof["age_label"]})' if age_prof['age_label'] else '<Subject 1>'
+    attire_or_morph_norm = 'morphology and natural surface' if is_non_human_norm else 'outfit'
+    if is_dynamic_env_mode and narrative_beat_plan:
+        for beat_item in narrative_beat_plan:
+            s_i_b = int(beat_item['shot_idx'])
+            sk_b = f'[Shot {s_i_b}]'
+            beat_txt_b = str(beat_item['text'] or '').strip().rstrip('.!?')
+            is_cut_b = bool(beat_item.get('is_scene_cut', False))
+            existing_b = str(sec_map.get(sk_b, '') or '').strip()
+            if not existing_b:
+                if s_i_b == 1:
+                    sec_map[sk_b] = f'{subj1_tag_norm} begins from <Picture 1> ({resolved_zoom}, {safe_cam_move}{light_clause}): {beat_txt_b}.'
+                elif is_cut_b:
+                    sec_map[sk_b] = f'[SCENE CUT] Cutting to a new cinematic angle in {resolved_style} style: {beat_txt_b}.'
+                else:
+                    carry_b = _extract_shot_carryover_state(sec_map.get(f'[Shot {s_i_b - 1}]', ''), s_i_b - 1, resolved_zoom, safe_cam_move, True, continuity_mode=cont_mode_norm, is_scene_cut=False)
+                    sec_map[sk_b] = f'{carry_b}{beat_txt_b}.'
+            else:
+                salient_words = [w.lower() for w in re.findall(r'[A-Za-zÅÄÖåäö]{5,}', beat_txt_b) if w.lower() not in ('subject', 'picture', 'camera', 'frame', 'while', 'through', 'inside', 'outside')]
+                if salient_words and not any(sw in existing_b.lower() for sw in salient_words[:4]):
+                    existing_b = f'{existing_b.rstrip(". ")} — {beat_txt_b}.'
+                if is_cut_b and '[scene cut]' not in existing_b.lower():
+                    existing_b = f'[SCENE CUT] {existing_b}'
+                sec_map[sk_b] = existing_b
     if not sec_map.get('[Shot 1]'):
-        sec_map['[Shot 1]'] = f'<Subject 1> ({resolved_age}) captured in the exact room and outfit of <Picture 1> ({resolved_zoom}, {safe_cam_move}{light_clause}). {static_summary}'
+        env_s1 = f'starting from the initial composition and {attire_or_morph_norm} of <Picture 1>' if is_dynamic_env_mode else f'captured in the exact setting and {attire_or_morph_norm} of <Picture 1>'
+        sec_map['[Shot 1]'] = f'{subj1_tag_norm} {env_s1} ({resolved_zoom}, {safe_cam_move}{light_clause}). {static_summary}'
     if not sec_map.get('[Shot 2]'):
-        cam_p2 = f'Continuing the {safe_cam_move}' if allow_camera_movement else 'Maintaining the exact room, outfit, and camera framing of <Picture 1>'
-        sec_map['[Shot 2]'] = f'{cam_p2}{light_clause} in {resolved_style} style with zero scene cuts, <Subject 1> ({resolved_age}) continues the natural movement and expression seamlessly from Shot 1.'
+        cam_p2 = f'Continuing the {safe_cam_move}' if allow_camera_movement else f'Maintaining the exact setting, {attire_or_morph_norm}, and camera framing of <Picture 1>'
+        cut_note_2 = '' if cont_mode_norm == 'hollywood_multi_scene_cuts' else ' with zero scene cuts'
+        sec_map['[Shot 2]'] = f'{cam_p2}{light_clause} in {resolved_style} style{cut_note_2}, {subj1_tag_norm} continues the natural movement and expression seamlessly from Shot 1.'
     if not sec_map.get('[Shot 3]'):
-        cam_p3 = f'Completing the {safe_cam_move}' if allow_camera_movement else 'Maintaining the exact room, outfit, and camera framing of <Picture 1>'
-        sec_map['[Shot 3]'] = f'{cam_p3}{light_clause} in {resolved_style} style with zero scene cuts, <Subject 1> ({resolved_age}) sustains the unbroken single-take performance over the {resolved_duration} duration.'
-    hair_beat_clause = 'with natural breathing and settled indoor hair' if is_indoor_scene else 'with natural breathing and fluid hair motion'
+        cam_p3 = f'Completing the {safe_cam_move}' if allow_camera_movement else f'Maintaining the exact setting, {attire_or_morph_norm}, and camera framing of <Picture 1>'
+        cut_note_3 = '' if cont_mode_norm == 'hollywood_multi_scene_cuts' else ' with zero scene cuts'
+        sec_map['[Shot 3]'] = f'{cam_p3}{light_clause} in {resolved_style} style{cut_note_3}, {subj1_tag_norm} sustains the expressive performance over the {resolved_duration} duration.'
+    hair_beat_clause = (
+        'with natural breathing and organic micro-motion'
+        if is_non_human_norm else (
+            'with natural breathing and settled indoor hair'
+            if is_indoor_scene else
+            'with natural breathing and fluid hair motion'
+        )
+    )
     wants_dance_beat = bool(re.search(r'(?i)\b(?:dance|dancing|dances|dansar|dans|hip[-\s]?hop|groove|body[-\s]?roll|sway(?:s|ing)?|squats?|squatting|hukar|hukande|på\s+huk)\b', clean_in))
     progression_beats = (
         (
@@ -2096,31 +2574,42 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
         (
             f'transitions fluidly into the next phase of the continuous performance {hair_beat_clause}',
             'deepens the rhythmic physical motion while holding the active body posture, gaze, and anatomical proportions locked in frame',
-            'sustains the expressive single-take physical cadence with crisp material foley and unbroken camera framing',
-            'carries the continuous motion arc forward with poised intensity and natural body kinematics',
+            'sustains the expressive physical cadence with crisp material foley and coherent camera framing',
+            'carries the cinematic motion arc forward with poised intensity and natural body kinematics',
         )
     )
     for idx_s in range(4, num_target_shots + 1):
         sk_cur = f'[Shot {idx_s}]'
         sk_prev = f'[Shot {idx_s - 1}]'
         if not sec_map.get(sk_cur):
-            carry_prefix = _extract_shot_carryover_state(sec_map.get(sk_prev, ''), idx_s - 1, resolved_zoom, safe_cam_move, allow_camera_movement)
+            carry_prefix = _extract_shot_carryover_state(sec_map.get(sk_prev, ''), idx_s - 1, resolved_zoom, safe_cam_move, allow_camera_movement, continuity_mode=cont_mode_norm)
             beat_phrase = progression_beats[(idx_s - 4) % len(progression_beats)]
-            sec_map[sk_cur] = f'{carry_prefix}<Subject 1> ({resolved_age}) {beat_phrase} across window {idx_s} of {num_target_shots}.'
+            sec_map[sk_cur] = f'{carry_prefix}{subj1_tag_norm} {beat_phrase}.'
     joined_shots_low = ' '.join((str(sec_map.get(k, '') or '') for k in shot_keys)).lower()
-    user_sents = [u_s.strip() for u_s in re.split(r'(?<=[.!?])\s+', str(clean_in or '').strip()) if len(u_s.strip()) > 8]
+    user_sents = [u_s.strip() for u_s in re.split(r'(?<=[.!?])\s+', str(clean_in_no_suno or clean_in or '').strip()) if len(u_s.strip()) > 8]
     missing_beats = []
-    salient_beat_pat = re.compile(r'(?i)\b(?:nip\s*slip|slip(?:s|ping)?|squat(?:s|ting)?|på\s+huk|hukar|hukande|knäböj(?:er|ande)?|på\s+knä|panties|pussy|labia|vulva|breasts?|nipples?|bra|crop\s*top|shy|blush(?:es|ing)?|sultry\s+smile|wink(?:s|ing)?|smiles?|kneel(?:s|ing)?|bend(?:s|ing)?|böjer|lifts?|pulls?|undress(?:es|ing)?|reveals?)\b')
+    clause_stopwords = {
+        'that', 'this', 'with', 'from', 'into', 'onto', 'over', 'under', 'while', 'when', 'where', 'then',
+        'they', 'them', 'their', 'hers', 'have', 'having', 'gets', 'getting', 'gives', 'giving', 'around',
+        'inside', 'outside', 'through', 'across', 'after', 'before', 'about', 'slightly', 'very', 'just',
+        'medan', 'genom', 'under', 'över', 'från', 'hennes', 'hans', 'deras',
+    }
     for u_sent in (user_sents[1:] if len(user_sents) >= 2 else user_sents):
-        sub_clauses = [sc.strip(' ,.;:') for sc in re.split(r'(?i)\b(?:and\s+she\s+|and\s+then\s+|,\s*and\s+)', u_sent) if len(sc.strip()) > 8]
+        sub_clauses = [sc.strip(' ,.;:') for sc in re.split(r'(?i)\b(?:and\s+she\s+|and\s+he\s+|and\s+they\s+|and\s+then\s+|,\s*and\s+|,\s*och\s+)', u_sent) if len(sc.strip()) > 8]
         for sc in sub_clauses:
-            hits = [m.group(0).lower() for m in salient_beat_pat.finditer(sc)]
-            if hits and not any((h in joined_shots_low for h in hits)):
+            content_toks = [
+                w.lower() for w in re.findall(r'[A-Za-zÅÄÖåäö]{3,}', sc)
+                if len(w) >= 4 and w.lower() not in clause_stopwords
+            ]
+            if not content_toks:
+                continue
+            matched_cnt = sum((1 for tok in content_toks if tok in joined_shots_low))
+            if matched_cnt < max(1, (len(content_toks) + 2) // 3):
                 norm_sc = sc[0].lower() + sc[1:] if len(sc) > 1 else sc.lower()
-                if not re.match(r'(?i)^(?:she|he|they|<subject\s*1>)\b', norm_sc):
+                if not re.match(r'(?i)^(?:she|he|they|hon|han|de|<subject\s*1>)\b', norm_sc):
                     norm_sc = f'<Subject 1> {norm_sc}'
                 else:
-                    norm_sc = re.sub(r'(?i)^she\b', '<Subject 1>', norm_sc)
+                    norm_sc = re.sub(r'(?i)^(?:she|he|hon|han)\b', '<Subject 1>', norm_sc)
                 missing_beats.append(norm_sc.rstrip('.!?'))
     if missing_beats:
         climax_idx = max(2, num_target_shots - 1) if num_target_shots >= 4 else max(2, num_target_shots)
@@ -2130,19 +2619,20 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
             r_key = f'[Shot {react_idx}]'
             c_beat = '; '.join(missing_beats[:-1])
             r_beat = missing_beats[-1]
-            sec_map[c_key] = f"{sec_map.get(c_key, '').rstrip('. ')} — {c_beat}, keeping the exact same room and outfit of <Picture 1>."
-            carry_r = _extract_shot_carryover_state(sec_map.get(c_key, ''), climax_idx, resolved_zoom, safe_cam_move, allow_camera_movement)
-            sec_map[r_key] = f"{carry_r}{r_beat} while continuing the rhythmic dance movement and facing the camera inside the exact same room as <Picture 1>."
+            sec_map[c_key] = f"{sec_map.get(c_key, '').rstrip('. ')} — {c_beat}."
+            carry_r = _extract_shot_carryover_state(sec_map.get(c_key, ''), climax_idx, resolved_zoom, safe_cam_move, allow_camera_movement, continuity_mode=cont_mode_norm)
+            sec_map[r_key] = f"{carry_r}{r_beat} while continuing the natural performance."
         else:
             t_key = f'[Shot {climax_idx}]'
             all_b = ', and '.join(missing_beats)
-            sec_map[t_key] = f"{sec_map.get(t_key, '').rstrip('. ')}. During this motion, {all_b} inside the exact same room as <Picture 1>."
+            sec_map[t_key] = f"{sec_map.get(t_key, '').rstrip('. ')}. During this motion, {all_b}."
     for idx_s in range(2, num_target_shots + 1):
         sk_cur = f'[Shot {idx_s}]'
         sk_prev = f'[Shot {idx_s - 1}]'
         cur_txt = sec_map.get(sk_cur, '').strip()
-        if cur_txt and not re.search(r'(?i)\b(?:continuing\s+seamlessly\s+from|from\s+the\s+final\s+frame\s+of\s+shot|continuing\s+the|maintaining\s+the\s+exact)\b', cur_txt[:110]):
-            carry_prefix = _extract_shot_carryover_state(sec_map.get(sk_prev, ''), idx_s - 1, resolved_zoom, safe_cam_move, allow_camera_movement)
+        has_cut_tag = bool(re.search(r'(?i)^\[\s*SCENE[\s_-]*CUT\s*\]', cur_txt))
+        if cur_txt and not has_cut_tag and not re.search(r'(?i)\b(?:continuing\s+seamlessly\s+from|cutting\s+cleanly\s+to|from\s+the\s+final\s+frame\s+of\s+shot|continuing\s+the|maintaining\s+the\s+exact)\b', cur_txt[:115]):
+            carry_prefix = _extract_shot_carryover_state(sec_map.get(sk_prev, ''), idx_s - 1, resolved_zoom, safe_cam_move, allow_camera_movement, continuity_mode=cont_mode_norm, is_scene_cut=False)
             sec_map[sk_cur] = f'{carry_prefix}{cur_txt}'.strip()
     zoom_low = str(resolved_zoom or 'medium-shot').lower()
     if (not allow_camera_movement) and any((w in zoom_low for w in ('wide', 'full-body', 'establishing', 'medium'))):
@@ -2151,18 +2641,27 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
             if sec_map.get(shot_k):
                 sec_map[shot_k] = re.sub(closeup_drift_pat, f'steady {resolved_zoom} framing at constant camera distance', sec_map[shot_k])
     stance_low_norm = str(resolved_stance or '').strip().lower()
-    wants_kneeling_norm = stance_low_norm.startswith('kneeling_crouching') or bool(re.search(r'(?i)\b(?:kneel|kneeling|on\s+her\s+knees|crouch|crouching|på\s+huk|hukar|hukande|knäböj(?:er|ande)?|på\s+knä)\b', clean_in))
-    standing_conflict_pat = r'(?i)\b(?:standing\s+tall\s+and\s+upright|stands?\s+tall\s+and\s+upright|standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance(?:\s+with\s+one\s+leg\s+raised)?|in\s+her\s+grounded\s+raised-leg\s+stance|standing\s+upright|staying\s+upright(?:\s+in\s+frame)?)\b'
-    age_prof_shot = _build_age_authority_profile(resolved_age, is_female=True, has_orc_tusks=has_orc_tusks_norm, allow_facial_metal=wants_face_metal_norm, style_target=resolved_style, tusk_descriptor=morph_norm['feat_desc'])
+    norm_3ax_stance = _resolve_3axis_director_directives(resolved_stance, '', '', user_scene_input=clean_in)
+    stance_conflict_pat_norm = str(norm_3ax_stance.get('stance_conflict_pat') or '')
+    stance_conflict_repl_norm = str(norm_3ax_stance.get('stance_conflict_repl') or '')
+    if not stance_conflict_pat_norm and bool(re.search(r'(?i)\b(?:kneel|kneeling|on\s+her\s+knees|crouch|crouching|på\s+huk|hukar|hukande|knäböj(?:er|ande)?|på\s+knä)\b', clean_in)):
+        stance_conflict_pat_norm = r'(?i)\b(?:standing\s+tall\s+and\s+upright|stands?\s+tall\s+and\s+upright|standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance(?:\s+with\s+one\s+leg\s+raised)?|in\s+her\s+grounded\s+raised-leg\s+stance|standing\s+upright|staying\s+upright(?:\s+in\s+frame)?)\b'
+        stance_conflict_repl_norm = 'kneeling low on the knees in a grounded crouching posture'
+    age_prof_shot = _build_age_authority_profile(resolved_age, is_female=True, has_orc_tusks=has_orc_tusks_norm, allow_facial_metal=wants_face_metal_norm, style_target=resolved_style, tusk_descriptor=morph_norm['feat_desc'], is_non_human=use_auto_age_norm, species_lock_phrase=subj_tax_norm['species_lock_clause'])
     face_id_phrase = age_prof_shot['face_id_phrase']
-    cam_dist_tail = f'following the {safe_cam_move} with zero hard scene cuts.' if allow_camera_movement else 'at the constant camera distance of Frame 0 with zero scene cuts.'
+    if cont_mode_norm == 'hollywood_multi_scene_cuts':
+        cam_dist_tail = 'across the multi-scene editorial cinematography.'
+    elif allow_camera_movement:
+        cam_dist_tail = f'following the {safe_cam_move} with zero hard scene cuts.'
+    else:
+        cam_dist_tail = 'at the constant camera distance of Frame 0 with zero scene cuts.'
     for (s_idx_norm, shot_k) in enumerate(shot_keys):
         s_txt = sec_map.get(shot_k, '').strip()
         if s_txt:
             if s_txt[-1] not in '.!?':
                 s_txt = s_txt.rstrip(',;:- ') + '.'
-            if wants_kneeling_norm and s_idx_norm > 0:
-                s_txt = re.sub(standing_conflict_pat, 'kneeling low on the knees in a grounded crouching posture', s_txt)
+            if stance_conflict_pat_norm and stance_conflict_repl_norm and (s_idx_norm > 0 or stance_low_norm.startswith('standing_upright')):
+                s_txt = re.sub(stance_conflict_pat_norm, stance_conflict_repl_norm, s_txt)
             if shot_setting_lock.lower() not in s_txt.lower():
                 s_txt = f'{s_txt} {shot_setting_lock}'.strip()
             if face_id_phrase[:24].lower() not in s_txt.lower():
@@ -2171,7 +2670,17 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
             sec_map[shot_k] = s_txt
     if not sec_map.get('[Constraints]'):
         cam_c_tag = safe_cam_move if allow_camera_movement else f'{resolved_zoom} constant camera distance'
-        sec_map['[Constraints]'] = f'The character identity ({resolved_age}{age_diff_phrase}), {face_id_phrase}, attire materials, {cam_c_tag}, {resolved_lighting} lighting, and {resolved_style} visual medium remain 100% locked across the entire unbroken single-take {resolved_duration} ({num_target_shots}-window) duration.'
+        id_lock_tag = (
+            f'The subject species and morphology ({face_id_phrase})'
+            if (is_non_human_norm or not age_prof_shot['age_label']) else
+            f'The character identity ({age_prof_shot["age_label"]}{age_diff_phrase}), {face_id_phrase}, attire materials'
+        )
+        if cont_mode_norm == 'hollywood_multi_scene_cuts':
+            sec_map['[Constraints]'] = f'{id_lock_tag}, and {resolved_style} visual medium remain 100% locked across all editorial scene cuts throughout the {resolved_duration} ({num_target_shots}-window) film sequence.'
+        elif cont_mode_norm == 'continuous_one_shot':
+            sec_map['[Constraints]'] = f'{id_lock_tag}, {cam_c_tag}, and {resolved_style} visual medium remain 100% locked across the continuous one-shot {resolved_duration} ({num_target_shots}-window) camera traversal as the environment evolves naturally.'
+        else:
+            sec_map['[Constraints]'] = f'{id_lock_tag}, {cam_c_tag}, {resolved_lighting} lighting, and {resolved_style} visual medium remain 100% locked across the entire unbroken single-take {resolved_duration} ({num_target_shots}-window) duration.'
     aud_mode = str(resolved_audio_mode or 'sfx_only').lower()
     wants_singing = (aud_mode == 'bgm_with_vocals')
     wants_speech = (aud_mode == 'sfx_and_speech')
@@ -2180,13 +2689,19 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
     vocal_scrub_pat = r'(?i)\b(?:with\s+)?(?:ethereal\s+|female\s+|male\s+|haunting\s+|soft\s+|breathy\s+|wordless\s+|operatic\s+|studio\s+|lead\s+)?(?:singing|sings|sung|vocals?|vocalist|lyrics|song\s+lyrics|choir|ballad|voiceover|chant(?:ing)?|a\s+cappella|humming|soprano|alto|tenor|baritone)\b'
     if wants_singing:
         back_pat = r'(?i)\b(?:turns?\s+around(?:\s+and\s+walks?\s+away)?|turning\s+around|spins?\s+around|spinning\s+around|twirls?(?:\s+around)?|twirling|pirouettes?|360[-\s]?degree|walks?\s+away(?:\s+from\s+(?:the\s+)?camera)?|walking\s+away(?:\s+from\s+(?:the\s+)?camera)?|with\s+(?:her|his|their)\s+back\s+(?:turned|to\s+the\s+camera)|from\s+behind|rear[-\s]?view|back\s+of\s+(?:her|his|their)\s+head)\b'
-        b1 = re.sub(back_pat, 'facing the camera directly in full posture with natural vocal expression', b1)
+        user_wants_side_gaze = bool(re.search(r'(?i)\b(?:look(?:s|ing)?\s+away|far\s+wall|side\s+profile|scan(?:s|ning)?\s+the\s+(?:room|wall|horizon))\b', str(clean_in or '')))
+        side_scan_pat = r'(?i)\b(?:eyes\s+scanning\s+the\s+(?:[\w\'-]+\s+){0,3}(?:far\s+wall|side\s+wall|distant\s+wall)|gaz(?:es|ing)\s+off[-\s]?screen\s+away\s+from\s+(?:the\s+)?camera|turn(?:s|ing)?\s+(?:her|his|their)\s+head\s+sharply\s+away\s+from\s+(?:the\s+)?camera)\b'
+        if not is_dynamic_env_mode:
+            b1 = re.sub(back_pat, 'facing the camera directly in full posture with natural vocal expression', b1)
         for shot_k in shot_keys:
             if sec_map.get(shot_k):
-                s_sing = re.sub(back_pat, 'remaining facing the camera lens in full-posture scale and singing expressively with natural lip-sync', sec_map[shot_k])
+                s_sing = sec_map[shot_k] if is_dynamic_env_mode else re.sub(back_pat, 'remaining facing the camera lens in full-posture scale and singing expressively with natural lip-sync', sec_map[shot_k])
+                if not user_wants_side_gaze and not is_dynamic_env_mode:
+                    s_sing = re.sub(side_scan_pat, 'keeping expressive frontal-to-three-quarter eye contact with the camera lens', s_sing)
                 s_sing = re.sub(r'(?i)\b(?:firmly\s+closed\s+mouth(?:\s+and\s+(?:fierce|focused)\s+silent\s+expression)?|fierce\s+silent\s+expression|serene\s+silent\s+expression|focused\s+silent\s+expression|silent\s+focused\s+intensity|in\s+silent\s+(?:reverence|focus))\b', 'expressive parted lips singing the lead vocals with natural lip-sync articulation', s_sing)
                 if 'singing' not in s_sing.lower() and 'lip-sync' not in s_sing.lower():
-                    s_sing = f'{s_sing.rstrip(".")}. <Subject 1> sings the lead vocals expressively at constant camera distance with synchronized vocal articulation and rhythmic full-body performance.'
+                    sing_dist_clause = 'in dynamic cinematic framing' if is_dynamic_env_mode else 'at constant camera distance'
+                    s_sing = f'{s_sing.rstrip(".")}. <Subject 1> sings the lead vocals expressively {sing_dist_clause} with synchronized vocal articulation and rhythmic full-body performance.'
                 sec_map[shot_k] = s_sing
     elif wants_speech:
         for shot_k in shot_keys:
@@ -2204,26 +2719,24 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
     elif wants_music:
         for shot_k in shot_keys:
             if sec_map.get(shot_k):
-                cleaned_m = _scrub_sfx_vocal_triggers(re.sub(vocal_scrub_pat, 'crisp diegetic foley', sec_map[shot_k]))
+                cleaned_m = _scrub_sfx_vocal_triggers(re.sub(vocal_scrub_pat, 'crisp diegetic foley', sec_map[shot_k]), clean_in)
                 if has_orc_tusks_norm:
                     cleaned_m = re.sub(
                         r'(?i)\b(?:firmly\s+closed\s+mouth(?:\s+and\s+(?:fierce|focused)\s+silent\s+expression)?|tightly\s+closed\s+lips|closed\s+mouth)\b',
-                        'focused silent expression with two sharp protruding white lower-jaw tusks clearly visible outside the lips',
+                        'natural expression with two sharp protruding white lower-jaw tusks clearly visible outside the lips',
                         cleaned_m,
                     )
                 sec_map[shot_k] = cleaned_m
     else:
         for shot_k in shot_keys:
             if sec_map.get(shot_k):
-                cleaned_shot = _scrub_sfx_vocal_triggers(re.sub(vocal_scrub_pat, 'crisp diegetic foley', re.sub(music_scrub_pat, 'crisp diegetic foley', sec_map[shot_k])))
+                cleaned_shot = _scrub_sfx_vocal_triggers(re.sub(vocal_scrub_pat, 'crisp diegetic foley', re.sub(music_scrub_pat, 'crisp diegetic foley', sec_map[shot_k])), clean_in)
                 if has_orc_tusks_norm:
                     cleaned_shot = re.sub(
                         r'(?i)\b(?:firmly\s+closed\s+mouth(?:\s+and\s+(?:fierce|focused)\s+silent\s+expression)?|tightly\s+closed\s+lips|closed\s+mouth)\b',
-                        'focused silent expression with two sharp protruding white lower-jaw tusks clearly visible outside the lips',
+                        'natural expression with two sharp protruding white lower-jaw tusks clearly visible outside the lips',
                         cleaned_shot,
                     )
-                if 'silent expression' not in cleaned_shot.lower() and 'closed' not in cleaned_shot.lower():
-                    cleaned_shot = f'{cleaned_shot.rstrip(".")}. <Subject 1> keeps a focused silent expression.'
                 sec_map[shot_k] = cleaned_shot
     if wants_singing:
         if not sec_map.get('[Overall Soundscape]'):
@@ -2270,18 +2783,17 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
         sec_map['[Overall Soundscape]'] = f'{base_sfx_os.rstrip(".")}; pure environmental foley and physical material acoustics only.'
         sec_map.pop('[Non-Diegetic Music]', None)
     if not is_nsfw or rating_tier == 'sfw':
-        sfw_tag = 'Strictly Safe-For-Work (SFW) scene; the character is fully clothed in modest, non-revealing full-coverage attire.'
+        sfw_tag = (
+            'Strictly Safe-For-Work (SFW) family-friendly scene.'
+            if is_non_human_norm else
+            'Strictly Safe-For-Work (SFW) scene; the character is fully clothed in modest, non-revealing full-coverage attire.'
+        )
         if 'safe-for-work' not in b1.lower() and 'fully clothed' not in b1.lower():
             b1 = f'{b1} {sfw_tag}'.strip()
         for shot_k in shot_keys + ['[Constraints]']:
             if sec_map.get(shot_k):
                 sec_map[shot_k] = _scrub_nsfw_terms_for_sfw(sec_map[shot_k])
         sec_map['[Constraints]'] = f"{sec_map.get('[Constraints]', '').strip()} {sfw_tag}".strip()
-    elif rating_tier == 'uncensored_action':
-        b1 = _scrub_unrequested_genital_hallucinations(b1, clean_in)
-        for shot_k in shot_keys + ['[Constraints]']:
-            if sec_map.get(shot_k):
-                sec_map[shot_k] = _scrub_unrequested_genital_hallucinations(sec_map[shot_k], clean_in)
     b1 = _sanitize_krea2_prose_and_runaway_clauses(b1, is_block1_image=True)
     b2_lines = ['BLOCK 2', f'[Master Scene & Visual Theme]\n{visual_anchor}']
     active_sec_order = sec_order if wants_music else [h for h in sec_order if h != '[Non-Diegetic Music]']
@@ -2292,25 +2804,35 @@ def _normalize_qwenvl_two_block_output(compiled_raw: str, clean_in: str, resolve
     return (b1, '\n\n'.join(b2_lines))
 
 
-def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, master_duration: str, style_target: str, subject_1_age: str, age_difference: str, camera_movement: str, lm_studio_endpoint: str, vram_cleanup_after: bool, camera_zoom: str='medium-shot', lighting_ambient: str='auto', custom_subject_1_age: str='', custom_age_difference: str='', custom_camera_movement: str='', custom_style_or_lighting: str='', custom_duration_seconds: float=0.0, compiler_seed: int=42, reference_image=None, content_rating_mode: str='Uncensored Artistic / Action (Ingen Censur — Följer Prompten)', ref_image_2_person=None, ref_image_3_clothing=None, ref_image_4_background=None, slot2_is_dual_subject: bool=False, audio_soundtrack_mode: str='sfx_only_no_music (Endast Ljudeffekter / Ingen Musik)', subject_stance_posture: str='auto_from_prompt (Auto från Prompt / Bild)', body_choreography_preset: str='auto_from_prompt_or_audio (Auto från Prompt / Ljud)', camera_trajectory_arc: str='follow_02_camera_setting (Följ [02] Kamerainställning / Auto)', background_extras_crowd: str='auto_from_prompt (Auto från Prompt — Slagsmål / Älskog / Barhäng / Stadsvy / Solo)', custom_negative_prompt: str=''):
+def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, master_duration: str, style_target: str, subject_1_age: str, age_difference: str, camera_movement: str, lm_studio_endpoint: str, vram_cleanup_after: bool, camera_zoom: str='medium-shot', lighting_ambient: str='auto', custom_subject_1_age: str='', custom_age_difference: str='', custom_camera_movement: str='', custom_style_or_lighting: str='', custom_duration_seconds: float=0.0, compiler_seed: int=42, reference_image=None, content_rating_mode: str='Uncensored Artistic / Action (Ingen Censur — Följer Prompten)', ref_image_2_person=None, ref_image_3_clothing=None, ref_image_4_background=None, slot2_is_dual_subject: bool=False, audio_soundtrack_mode: str='sfx_only_no_music (Endast Ljudeffekter / Ingen Musik)', subject_stance_posture: str='auto_from_prompt (Auto från Prompt / Bild)', body_choreography_preset: str='auto_from_prompt_or_audio (Auto från Prompt / Ljud)', camera_trajectory_arc: str='follow_02_camera_setting (Följ [02] Kamerainställning / Auto)', background_extras_crowd: str='auto_from_prompt (Auto från Prompt — Slagsmål / Älskog / Barhäng / Stadsvy / Solo)', custom_negative_prompt: str='', scene_continuity_mode: str=SCENE_CONTINUITY_MODES[0]):
     rng = random.Random(int(compiler_seed))
     eff_audio_mode = _resolve_audio_soundtrack_mode(audio_soundtrack_mode, user_scene_input)
-    rating_tier = _resolve_content_rating_tier(content_rating_mode, user_scene_input)
-    is_nsfw = (rating_tier != 'sfw')
     resolved_stance = _resolve_dropdown_custom_or_random(subject_stance_posture, SUBJECT_STANCE_POSTURE_PRESETS, '', rng, SUBJECT_STANCE_POSTURE_PRESETS[0])
     resolved_choreo = _resolve_dropdown_custom_or_random(body_choreography_preset, BODY_CHOREOGRAPHY_PRESETS, '', rng, BODY_CHOREOGRAPHY_PRESETS[0])
     resolved_arc = _resolve_dropdown_custom_or_random(camera_trajectory_arc, CAMERA_TRAJECTORY_ARC_PRESETS, '', rng, CAMERA_TRAJECTORY_ARC_PRESETS[0])
     resolved_extras = _resolve_dropdown_custom_or_random(background_extras_crowd, BACKGROUND_EXTRAS_CROWD_PRESETS, '', rng, BACKGROUND_EXTRAS_CROWD_PRESETS[0])
+    rating_tier = _resolve_content_rating_tier(content_rating_mode, user_scene_input, resolved_stance, resolved_choreo, resolved_extras)
+    is_nsfw = (rating_tier != 'sfw')
+    resolved_continuity_mode = resolve_scene_continuity_mode(
+        scene_continuity_mode=scene_continuity_mode,
+        user_scene_input=user_scene_input,
+        subject_stance_posture=resolved_stance,
+        body_choreography_preset=resolved_choreo,
+        camera_trajectory_arc=resolved_arc,
+    )
+    is_dynamic_continuity = resolved_continuity_mode in ('continuous_one_shot', 'hollywood_multi_scene_cuts')
     dir_3ax = _resolve_3axis_director_directives(resolved_stance, resolved_choreo, resolved_arc, user_scene_input=user_scene_input, background_extras_crowd=resolved_extras, slot2_is_dual_subject=slot2_is_dual_subject, age_difference=age_difference)
     cast_info = dir_3ax['cast_info']
     resolved_age = _resolve_dropdown_custom_or_random(subject_1_age, SUBJECT_AGE_PRESETS, custom_subject_1_age, rng, '25-year-old')
     resolved_age_diff = _resolve_dropdown_custom_or_random(age_difference, AGE_DIFFERENCE_PRESETS, custom_age_difference, rng, 'same age')
-    allow_cam_move = _is_intentional_camera_movement_requested(camera_movement, custom_camera_movement, user_scene_input) or bool(dir_3ax['force_camera_move'])
+    allow_cam_move = _is_intentional_camera_movement_requested(camera_movement, custom_camera_movement, user_scene_input) or bool(dir_3ax['force_camera_move']) or is_dynamic_continuity
     if dir_3ax['arc_phrase']:
         resolved_cam_move = dir_3ax['arc_phrase']
     elif str(camera_movement or '').strip().lower() == 'random':
         moving_pool = [p for p in CAMERA_MOVEMENT_PRESETS if 'locked-off' not in p.lower()]
         resolved_cam_move = rng.choice(moving_pool) if moving_pool else CAMERA_MOVEMENT_PRESETS[0]
+    elif is_dynamic_continuity and str(camera_movement or '').strip().lower().startswith('locked-off') and not str(custom_camera_movement or '').strip():
+        resolved_cam_move = 'low-angle medium-wide tracking shot with a handheld camera aesthetic' if resolved_continuity_mode == 'continuous_one_shot' else 'smooth crane-up reveal transitioning into an anamorphic push-in'
     elif allow_cam_move:
         resolved_cam_move = _resolve_dropdown_custom_or_random(camera_movement, CAMERA_MOVEMENT_PRESETS, custom_camera_movement, rng, CAMERA_MOVEMENT_PRESETS[0])
     else:
@@ -2350,7 +2872,7 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
     raw_u_scene = str(user_scene_input or '').strip()
     has_slot5_scene_directive = 'Reference Video Slot #5' in raw_u_scene
     is_i2i_ref_framing = bool((pil_ref is not None) and (not has_slot5_scene_directive))
-    (system_instruction, redacted_http_instruction, prompt_mode_tag) = _resolve_qwenvl_system_prompt(master_duration=resolved_duration, cut_1=cut_1, cut_2=cut_2, style_target=resolved_style, camera_zoom=resolved_zoom, lighting_ambient=resolved_lighting, subject_1_age=resolved_age, age_difference=resolved_age_diff, camera_movement=resolved_cam_move, content_rating_mode=content_rating_mode, audio_soundtrack_mode=eff_audio_mode, user_scene_input=eff_user_scene_for_prof, allow_camera_movement=allow_cam_move, has_reference_image=is_i2i_ref_framing)
+    (system_instruction, redacted_http_instruction, prompt_mode_tag) = _resolve_qwenvl_system_prompt(master_duration=resolved_duration, cut_1=cut_1, cut_2=cut_2, style_target=resolved_style, camera_zoom=resolved_zoom, lighting_ambient=resolved_lighting, subject_1_age=resolved_age, age_difference=resolved_age_diff, camera_movement=resolved_cam_move, content_rating_mode=content_rating_mode, audio_soundtrack_mode=eff_audio_mode, user_scene_input=eff_user_scene_for_prof, allow_camera_movement=allow_cam_move, has_reference_image=is_i2i_ref_framing, resolved_continuity_mode=resolved_continuity_mode)
     if dir_3ax['vlm_directive']:
         system_instruction = f"{system_instruction}\n\n[UNIVERSAL 3-AXIS DIRECTOR & CAST/EXTRAS OVERRIDES]:\n{dir_3ax['vlm_directive']}"
         redacted_http_instruction = f"{redacted_http_instruction}\n\n[UNIVERSAL 3-AXIS DIRECTOR & CAST/EXTRAS OVERRIDES]:\n{dir_3ax['vlm_directive']}"
@@ -2358,20 +2880,25 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
     extra_b64s = []
     ref_role_lines = []
     img_counter = 0
+    subj_tax_pre = _detect_subject_taxonomy_and_species_lock(eff_user_scene_for_prof, '', resolved_age, custom_subject_1_age, has_reference_image=(pil_ref is not None))
     if pil_ref is not None:
         img_counter += 1
         orc_ref_lock = (
             f" MANDATORY MORPHOLOGY & SKIN PIGMENT LOCK FROM IMAGE #{img_counter}: Preserve the subject's {ref_orc_info['trait_clause']} from Image #{img_counter} unless explicitly overridden by the user prompt — NEVER misidentify a tusked subject as an elf and NEVER replace non-human skin pigment with generic tan human skin."
             if ref_orc_info.get('has_visible_tusks') else ''
         )
+        species_ref_lock = (
+            f" STRICT SPECIES & MORPHOLOGY LOCK FROM IMAGE #{img_counter}: Preserve 100% of Image #{img_counter}'s exact biological species, anatomy, and natural coat/fur/feathers/scales/skin unless the user prompt explicitly requests a transformation — NEVER mutate one animal species into another (e.g., a mouse MUST remain a mouse and NEVER become a bird or grow unrequested wings, feathers, beak, human face, or clothing)."
+            if not subj_tax_pre['allows_metamorphosis'] else ''
+        )
         if has_slot5_scene_directive or bool(cast_info['has_multi_main_cast']):
-            ref_role_lines.append(f"- Image #{img_counter} (PRIMARY PROTAGONIST <Main_Subject 1> IDENTITY, SPECIES, SKIN COLOR & FACIAL REFERENCE ONLY — DO NOT CLONE FACE ONTO <Main_Subject 2>): Extract ONLY <Main_Subject 1>'s facial likeness, species/race, skin color/pigment, hair, and anatomical traits from Image #{img_counter}, while using the user prompt (and Reference Video Slot #5 if present) for the scene setting, outfit, posture, any additional main characters (<Main_Subject 2>..N), and active background extras (<Subject 1>..M) in '{resolved_style}' style ({aesthetic_rule}).{orc_ref_lock}")
+            ref_role_lines.append(f"- Image #{img_counter} (PRIMARY PROTAGONIST <Main_Subject 1> IDENTITY, SPECIES, SKIN/COAT & MORPHOLOGY REFERENCE ONLY — DO NOT CLONE ONTO <Main_Subject 2>): Extract ONLY <Main_Subject 1>'s exact species, facial/head likeness, skin/coat color, and anatomical traits from Image #{img_counter}, while using the user prompt (and Reference Video Slot #5 if present) for the scene setting, attire, posture, any additional main characters (<Main_Subject 2>..N), and active background extras (<Subject 1>..M) in '{resolved_style}' style ({aesthetic_rule}).{orc_ref_lock}{species_ref_lock}")
         elif style_low.startswith('original'):
-            ref_role_lines.append(f"- Image #{img_counter} (PRIMARY PROTAGONIST <Main_Subject 1> IDENTITY, POSE, STYLE & COMPOSITION REFERENCE): Mandatory visual foundation. Strictly preserve 100% of <Main_Subject 1>'s exact facial features, species/race, skin color, anatomical traits, attire, initial starting pose, and original artistic rendering style from Image #{img_counter}.{orc_ref_lock}")
+            ref_role_lines.append(f"- Image #{img_counter} (PRIMARY PROTAGONIST <Main_Subject 1> IDENTITY, SPECIES, POSE, STYLE & COMPOSITION REFERENCE): Mandatory visual foundation. Strictly preserve 100% of <Main_Subject 1>'s exact species, facial/head morphology, skin/coat texture, anatomical traits, attire if present, initial starting pose, and original artistic rendering style from Image #{img_counter}.{orc_ref_lock}{species_ref_lock}")
         elif style_low in ('dark-fantasy-real', 'dark-fantasy-cgi', 'dark-fantasy'):
-            ref_role_lines.append(f"- Image #{img_counter} (PROTAGONIST <Main_Subject 1> IDENTITY, POSE & DARK-FANTASY 3D TRANSMUTATION BLUEPRINT): In BLOCK 1 ([IMAGE]), render in '{resolved_style}' ({aesthetic_rule}) while preserving 100% of <Main_Subject 1>'s facial likeness, hair length and color, eyewear geometry/color if present, intrinsic skin tone, body posture, and camera framing distance from Image #{img_counter}. Dark-fantasy thematic transmutation (forged dark-iron/gold pauldrons or armor accents, gothic chains, demonic/ancient horns, glowing embers) is permitted, and any flat indoor wall behind the subject MUST be expanded into a deep 3D Z-axis gothic abyssal vault with shallow f/1.8 optical background bokeh rather than a flat stone relief.{orc_ref_lock}")
+            ref_role_lines.append(f"- Image #{img_counter} (PROTAGONIST <Main_Subject 1> IDENTITY, SPECIES, POSE & DARK-FANTASY ATMOSPHERIC BLUEPRINT): In BLOCK 1 ([IMAGE]), render in '{resolved_style}' ({aesthetic_rule}) while preserving 100% of <Main_Subject 1>'s exact species, facial/head likeness, hair/fur/surface color, eyewear/accessories if present, intrinsic skin/coat tone, body posture, attire/appearance, and camera framing distance from Image #{img_counter}. Apply grimdark obsidian-and-ember atmospheric lighting and expand any flat wall behind the subject into a deep 3D Z-axis gothic/abyssal background with shallow f/1.8 optical bokeh, WITHOUT inventing unrequested armor, pauldrons, chains, or horns that are absent from both Image #{img_counter} and the user prompt.{orc_ref_lock}{species_ref_lock}")
         else:
-            ref_role_lines.append(f"- Image #{img_counter} (MANDATORY 1:1 CHARACTER, OUTFIT, POSE, FRAMING & ENVIRONMENT BLUEPRINT — CONVERT RENDERING MEDIUM ONLY UNLESS OVERRIDDEN BY USER PROMPT): In BLOCK 1 ([IMAGE]), translate ONLY the rendering medium into '{resolved_style}' ({aesthetic_rule}) while preserving 100% of every attribute in Image #{img_counter} that is NOT explicitly changed by the user prompt: exact hair length, silhouette, and color (NEVER shorten long hair into a bob or lengthen short hair unless prompted), exact eyewear/headwear frame geometry and color if present (NEVER turn colored frames into rimless frames or invent unpresent accessories), exact jewelry/neckwear, exact garment cut, layering, and graphic motifs/colors, exact intrinsic skin albedo/complexion under neutral white-balance (preserve true skin brightness and undertone without baking ambient indoor lighting casts into a darker or lighter skin tone unless prompted), exact body posture, camera framing distance, hand placement, facial expression, and background setting.{orc_ref_lock}")
+            ref_role_lines.append(f"- Image #{img_counter} (MANDATORY 1:1 SUBJECT SPECIES, APPEARANCE, POSE, FRAMING & ENVIRONMENT BLUEPRINT — CONVERT RENDERING MEDIUM ONLY UNLESS OVERRIDDEN BY USER PROMPT): In BLOCK 1 ([IMAGE]), translate ONLY the rendering medium into '{resolved_style}' ({aesthetic_rule}) while preserving 100% of every attribute in Image #{img_counter} that is NOT explicitly changed by the user prompt: exact biological species and head/body morphology, exact hair/fur/feather length, silhouette, and color, exact eyewear/headwear/jewelry/garment geometry and motifs if present, exact intrinsic skin/coat albedo under neutral white-balance, exact body posture, camera framing distance, limb placement, expression, and background setting.{orc_ref_lock}{species_ref_lock}")
     if pil_r2 is not None:
         img_counter += 1
         extra_pils.append(pil_r2)
@@ -2393,11 +2920,9 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
             ref_role_lines.append(f'- Image #{img_counter} (REFERENCE VIDEO SCENE, CAMERA FRAMING & POSTURE TEMPLATE AT START_OFFSET_SEC): Use Image #{img_counter} as the spatial scene layout, camera angle, stage/desk framing, and subject posture template to be re-enacted and transformed according to the user prompt.')
         else:
             ref_role_lines.append(f'- Image #{img_counter} (BACKGROUND ENVIRONMENT REFERENCE): Place the cast inside the exact background setting, architecture, sky, and lighting atmosphere shown in Image #{img_counter}.')
-    pre_clean_input = _apply_age_override_to_text(str(user_scene_input or '').strip(), resolved_age)
+    pre_clean_input = _apply_age_override_to_text(str(user_scene_input or '').strip(), resolved_age, is_non_human=bool(subj_tax_pre['use_auto_age_bypass']))
     if not is_nsfw:
         pre_clean_input = _scrub_nsfw_terms_for_sfw(pre_clean_input)
-    elif rating_tier == 'uncensored_action':
-        pre_clean_input = _scrub_unrequested_genital_hallucinations(pre_clean_input)
     vlm_user_input = pre_clean_input
     if ref_role_lines:
         role_block = '[MANDATORY MULTI-IMAGE REFERENCE BINDING]:\n' + '\n'.join(ref_role_lines)
@@ -2407,7 +2932,7 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
     import hashlib
     b64_sigs = tuple((hashlib.md5(u.encode('utf-8')).hexdigest()[:16] for u in all_b64))
     vlm_cache_key = (
-        'v33_i2i_ref_pose_and_t2i_neutral_framing',
+        'v35_preset_authority_and_species_fidelity',
         str(vlm_model_name or '').strip(),
         str(pre_clean_input or '').strip(),
         str(resolved_style or '').strip(),
@@ -2424,6 +2949,7 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
         str(resolved_choreo or '').strip(),
         str(resolved_arc or '').strip(),
         str(resolved_extras or '').strip(),
+        str(resolved_continuity_mode or '').strip(),
         int(compiler_seed) & 2147483647,
         bool(slot2_is_dual_subject),
         b64_sigs,
@@ -2486,13 +3012,15 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
         if len(raw_vlm_cache) >= 32:
             raw_vlm_cache.pop(next(iter(raw_vlm_cache)), None)
         raw_vlm_cache[vlm_cache_key] = compiled_raw
+    subj_tax_mid = _detect_subject_taxonomy_and_species_lock(eff_user_scene_for_prof, compiled_raw, resolved_age, custom_subject_1_age, has_reference_image=(pil_ref is not None))
     age_diff_low = str(resolved_age_diff).lower()
-    age_diff_phrase = '' if 'none' in age_diff_low or 'single' in age_diff_low or 'same' in age_diff_low else f', {resolved_age_diff}'
-    clean_in = _apply_age_override_to_text(eff_user_scene_for_prof, resolved_age)
+    age_diff_phrase = '' if 'none' in age_diff_low or 'single' in age_diff_low or 'same' in age_diff_low or bool(subj_tax_mid['is_non_human']) else f', {resolved_age_diff}'
+    clean_in = _apply_age_override_to_text(eff_user_scene_for_prof, resolved_age, is_non_human=bool(subj_tax_mid['use_auto_age_bypass']))
     if not is_nsfw:
         clean_in = _scrub_nsfw_terms_for_sfw(clean_in)
-    elif rating_tier == 'uncensored_action':
-        clean_in = _scrub_unrequested_genital_hallucinations(clean_in)
+    if subj_tax_mid['is_animal_creature'] and not subj_tax_mid['is_avian'] and not subj_tax_mid['allows_metamorphosis'] and subj_tax_mid['matched_species'] and compiled_raw:
+        sp_keep = subj_tax_mid['matched_species']
+        compiled_raw = _SUBJECT_AVIAN_REGEX.sub(sp_keep, compiled_raw)
     user_wants_elf = bool(re.search(r'(?i)\b(?:elf|elven)\b', str(user_scene_input or '')) and not re.search(r'(?i)\b(?:elven[-\s]?like\s+ears|elf\s+ears)\b', str(user_scene_input or '')))
     if ref_orc_info.get('has_visible_tusks') and not user_wants_elf and compiled_raw:
         compiled_raw = re.sub(
@@ -2500,7 +3028,7 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
             ref_orc_info['trait_clause'],
             compiled_raw,
         )
-    (block1_clean, block2_clean) = _normalize_qwenvl_two_block_output(compiled_raw=compiled_raw, clean_in=clean_in, resolved_age=resolved_age, age_diff_phrase=age_diff_phrase, resolved_zoom=resolved_zoom, resolved_lighting=resolved_lighting, resolved_cam_move=resolved_cam_move, aesthetic_rule=aesthetic_rule, resolved_duration=resolved_duration, cut_1=cut_1, cut_2=cut_2, resolved_style=resolved_style, is_nsfw=is_nsfw, resolved_audio_mode=eff_audio_mode, rating_tier=rating_tier, allow_camera_movement=allow_cam_move, resolved_stance=resolved_stance, background_extras_crowd=resolved_extras, slot2_is_dual_subject=slot2_is_dual_subject, has_reference_image=is_i2i_ref_framing)
+    (block1_clean, block2_clean) = _normalize_qwenvl_two_block_output(compiled_raw=compiled_raw, clean_in=clean_in, resolved_age=resolved_age, age_diff_phrase=age_diff_phrase, resolved_zoom=resolved_zoom, resolved_lighting=resolved_lighting, resolved_cam_move=resolved_cam_move, aesthetic_rule=aesthetic_rule, resolved_duration=resolved_duration, cut_1=cut_1, cut_2=cut_2, resolved_style=resolved_style, is_nsfw=is_nsfw, resolved_audio_mode=eff_audio_mode, rating_tier=rating_tier, allow_camera_movement=allow_cam_move, resolved_stance=resolved_stance, background_extras_crowd=resolved_extras, slot2_is_dual_subject=slot2_is_dual_subject, has_reference_image=is_i2i_ref_framing, resolved_continuity_mode=resolved_continuity_mode)
     if ref_orc_info.get('has_visible_tusks') and not user_wants_elf:
         block1_clean = re.sub(r'(?i)\b(?:female\s+)?elf\b', ref_orc_info['trait_clause'], block1_clean)
         block2_clean = re.sub(r'(?i)\b(?:female\s+)?elf\b', ref_orc_info['trait_clause'], block2_clean)
@@ -2533,9 +3061,11 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
         block2_clean = re.sub(r'(\[Shot\s*\d+\]\s*\n)', rf"\1<Subject 1> is {dir_3ax['choreo_phrase']}. ", block2_clean)
     if dir_3ax['arc_phrase'] and dir_3ax['arc_phrase'][:28].lower() not in block2_clean.lower():
         block2_clean = re.sub(r'(\[Master Scene & Visual Theme\]\s*\n)', rf"\1Camera Trajectory Arc: {dir_3ax['arc_phrase']}. ", block2_clean, count=1)
+    subj_tax_final = _detect_subject_taxonomy_and_species_lock(user_scene_input, f'{compiled_raw} {block1_clean}', resolved_age, custom_subject_1_age, has_reference_image=(pil_ref is not None))
+    is_non_human_final = bool(subj_tax_final['is_non_human'])
     morph_final = _extract_prompt_morphology_profile(clean_in)
     has_orc_tusks_final = bool(morph_final['has_tusks']) or bool(ref_orc_info.get('has_visible_tusks'))
-    age_prof_final = _build_age_authority_profile(resolved_age, is_female=True, has_orc_tusks=has_orc_tusks_final, allow_facial_metal=wants_facial_metal, style_target=resolved_style, tusk_descriptor=morph_final['feat_desc'])
+    age_prof_final = _build_age_authority_profile(resolved_age, is_female=True, has_orc_tusks=has_orc_tusks_final, allow_facial_metal=wants_facial_metal, style_target=resolved_style, tusk_descriptor=morph_final['feat_desc'], is_non_human=bool(subj_tax_final['use_auto_age_bypass']), species_lock_phrase=subj_tax_final['species_lock_clause'])
     age_years_val = int(age_prof_final['age_years'])
     vault_bundle = _load_licensed_allan_ballan_vault() if is_licensed else None
     light_bundle = _load_freemium_light_bundle()
@@ -2548,12 +3078,14 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
     has_dual_subj_final = bool(cast_info['has_multi_main_cast'])
     has_bg_extras_final = bool(cast_info['has_background_extras'])
     has_male_cast_final = has_dual_subj_final or bool(re.search(r'(?i)\b(?:male|man|men|boy|senator|gentleman|king|prince|lord|father|brother|husband|guy|he|him|his)\b', clean_in))
-    masc_guard = '' if has_male_cast_final else 'masculine face, '
-    if age_years_val <= 35 and not has_dual_subj_final:
+    masc_guard = '' if (has_male_cast_final or is_non_human_final) else 'masculine face, '
+    if is_non_human_final:
+        fem_guard_neg = ''
+    elif age_years_val <= 35 and not has_dual_subj_final:
         fem_guard_neg = f'{masc_guard}old wrinkled face, deep forehead wrinkles, nasolabial folds, ' if re.search(r'(?i)\b(?:she|her|female|woman|queen|goddess|heroine)\b', clean_in) else ''
     else:
         fem_guard_neg = f'{masc_guard}' if re.search(r'(?i)\b(?:she|her|female|woman|queen|goddess|heroine)\b', clean_in) else ''
-    is_indoor_final = bool(
+    is_indoor_final = (not is_dynamic_continuity) and (not is_non_human_final) and bool(
         re.search(r'(?i)\b(?:studio|news\s+desk|broadcast|indoor|indoors|interior|room|office|tavern|bar|cockpit|interview(?:ing)?|anchor|teleprompter|desk)\b', clean_in)
     ) and not bool(re.search(r'(?i)\b(?:wind|windy|breeze|storm|gale|blizzard|gusts?)\b', clean_in))
     indoor_wind_tpl = str(neg_templates.get('indoor_wind') or 'wind-blown hair, hair blowing in wind, indoor wind, wind gusts, flying hair strands').strip().rstrip(',')
@@ -2569,7 +3101,7 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
     elif has_dual_subj_final:
         dual_subj_neg = f'identical twins, cloned character, duplicate of Main_Subject 1, exact same face on both characters, {s2_trait_guard_neg}tiny blurry main partner far in background, fused bodies, merged limbs, extra disembodied head behind shoulder, '
         clip77_anti_twin_lead = f'(identical twins, cloned character, duplicate of Main_Subject 1, {s2_trait_guard_neg}exact same face on both characters, double face, ghosted face, superimposed face overlay:1.95)'
-    elif not has_bg_extras_final:
+    elif not has_bg_extras_final and not is_dynamic_continuity:
         dual_subj_neg = 'unrequested background people, extra heads behind shoulder, crowd in background, '
     else:
         dual_subj_neg = 'fused bodies, merged limbs, extra disembodied head, '
@@ -2582,28 +3114,35 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
     elif eff_audio_mode == 'sfx_and_speech':
         audio_neg = f'closed mouth, static mouth, sealed lips, frozen smile, mute face, background music, non-diegetic music, musical score, soundtrack, instrumental music, orchestra, synth, drums, guitar, piano, melody, singing, song lyrics, choir, musical ballad, chanting, opera, {drift_neg}distorted audio, audio clipping, loud static, '
     elif eff_audio_mode == 'instrumental_bgm':
-        audio_neg = f'singing, vocals, lead vocals, female vocals, male vocals, human voice, male voice, groaning, grunting, heavy breathing, panting, sighing, mumbling, lyrics, song lyrics, choir, ballad, chanting, humming, opera, spoken dialogue, speech, talking, voiceover, open mouth singing, {drift_neg}distorted audio, audio clipping, loud static, '
+        audio_neg = f'singing, lead vocals, song lyrics, choir, musical ballad, opera, spoken voiceover narration, open mouth singing, {drift_neg}distorted audio, audio clipping, loud static, '
     else:
-        audio_neg = f'background music, non-diegetic music, musical score, soundtrack, instrumental music, orchestra, synth, drums, guitar, piano, melody, singing, vocals, lead vocals, human voice, male voice, female voice, groaning, grunting, heavy breathing, panting, sighing, mumbling, roaring, screaming, lyrics, choir, ballad, chanting, humming, spoken dialogue, speech, talking, voiceover, open mouth talking, {drift_neg}distorted audio, audio clipping, loud static, '
-    if dir_3ax['is_outro_follow']:
-        audio_neg = re.sub(r'(?i)\b(?:turned\s+back,\s*|walking\s+away\s+from\s+camera,\s*|rear\s+view,\s*|back\s+of\s+head,\s*)', '', audio_neg)
+        audio_neg = f'background music, non-diegetic music, musical score, soundtrack, instrumental music, orchestra, synth, drums, guitar, piano, melody, singing, lead vocals, song lyrics, choir, musical ballad, opera, spoken voiceover narration, {drift_neg}distorted audio, audio clipping, loud static, '
+    if dir_3ax['is_outro_follow'] or is_dynamic_continuity:
+        audio_neg = re.sub(r'(?i)\b(?:turned\s+back,\s*|spinning\s+around,\s*|walking\s+away\s+from\s+camera,\s*|rear\s+view,\s*|back\s+of\s+head,\s*)', '', audio_neg)
     wan_quality_neg = str(neg_templates.get('cn_tail') or neg_templates.get('core_wan_quality') or '色调艳丽, 过曝, 静态, 细节模糊不清, 字幕, 风格, 作品, 画作, 画面, 静止, 整体发灰, 最差质量, 低质量, JPEG压缩残留, 丑陋的, 残缺的, 多余的手指, 画得不好的手部, 画得不好的脸部, 畸形的, 毁容的, 形态畸形的肢体, 手指融合, 静止不动的画面, 杂乱的背景, 三条腿, 背景人很多, 倒着走').strip().rstrip(',')
     if rating_tier in ('nsfw_explicit', 'uncensored_action'):
         base_core_neg = f'({audio_neg}text, logo, watermark, signature, username, censored, mosaic censorship, bar censor:1.6), {wan_quality_neg},'
     else:
         base_core_neg = f'({audio_neg}nsfw, nude, naked, nipples, cleavage, bikini, lingerie, bare breasts, bare midriff, explicit, cum, white cum, milky liquid, text, logo, watermark:1.6), {wan_quality_neg},'
-    if dir_3ax['is_multi_subject_crowd'] or has_dual_subj_final or has_bg_extras_final:
+    if dir_3ax['is_multi_subject_crowd'] or has_dual_subj_final or has_bg_extras_final or is_dynamic_continuity:
         base_core_neg = re.sub(r'杂乱的背景,\s*|三条腿,\s*|背景人很多,\s*', '', base_core_neg)
+    if dir_3ax.get('choreo_neg_tokens'):
+        base_core_neg = re.sub(r'静态,\s*|静止,\s*|静止不动的画面,\s*', '', base_core_neg)
     style_neg_lead = style_prof.get('neg_prefix', '')
     if age_years_val >= 40 and style_neg_lead:
         style_neg_lead = re.sub(r'(?i),?\s*old\s+wrinkled\s+face', '', style_neg_lead)
-    age_neg_lead = '' if has_dual_subj_final else age_prof_final['neg_tokens']
+    age_neg_lead = '' if (has_dual_subj_final or bool(subj_tax_final['use_auto_age_bypass'])) else age_prof_final['neg_tokens']
+    preset_3ax_neg = str(dir_3ax.get('combined_3axis_neg') or '').strip()
+    cam_lock_neg = '' if (allow_cam_move or 'camera zoom-in' in preset_3ax_neg.lower()) else '(camera zoom-in, dolly-in, push-in, camera pan, whip-pan, zoom-out, hard jump cut:1.65)'
+    morph_neg_lead = str(morph_final.get('neg_guard') or '').strip()
+    species_neg_lead = str(subj_tax_final.get('species_neg_guard') or '').strip()
     sat_strength_val = _resolve_color_saturation_strength(resolved_lighting, custom_style_or_lighting=custom_style_or_lighting, user_scene_input=user_scene_input)
     sat_guard = str(neg_templates.get('saturation_low') or neg_templates.get('desaturated_chroma_guard') or '(oversaturated colors, hyper-saturated neon skin, radioactive red skin, blown-out neon chroma, glowing magenta-blue oversaturation, artificial color clipping:1.55)').strip().rstrip(',')
     sat_neg_lead = sat_guard if sat_strength_val <= 0.85 else ''
-    lead_combo = ', '.join([x for x in (clip77_anti_twin_lead, sat_neg_lead, age_neg_lead, style_neg_lead) if x])
+    lead_combo = ', '.join([x for x in (clip77_anti_twin_lead, species_neg_lead, morph_neg_lead, preset_3ax_neg, cam_lock_neg, sat_neg_lead, age_neg_lead, style_neg_lead) if x])
     auto_adaptive_neg = f'{lead_combo}, {base_core_neg}' if lead_combo else base_core_neg
-    custom_neg_str = str(custom_negative_prompt or '').strip()
+    raw_custom_neg_str = str(custom_negative_prompt or '').strip()
+    custom_neg_str = _reconcile_custom_negative_style_collision(raw_custom_neg_str, resolved_style, style_neg_lead)
     adaptive_neg = custom_neg_str if custom_neg_str else auto_adaptive_neg
     if vram_cleanup_after:
         if hasattr(comfy.model_management, 'unload_all_models'):
@@ -2617,6 +3156,6 @@ def execute_qwenvl_story_compiler(user_scene_input: str, vlm_model_name: str, ma
                 torch.cuda.reset_peak_memory_stats()
             except Exception:
                 pass
-    resolved_meta = {'master_duration': resolved_duration, 'duration_seconds': dur_seconds_val, 'style_target': resolved_style, 'camera_zoom': resolved_zoom, 'lighting_ambient': resolved_lighting, 'color_saturation_strength': float(sat_strength_val), 'subject_1_age': age_prof_final['age_label'], 'subject_1_age_num': age_years_val, 'age_difference': resolved_age_diff, 'camera_movement': resolved_cam_move, 'allow_camera_movement': bool(allow_cam_move), 'content_rating_mode': str(content_rating_mode), 'content_rating_tier': rating_tier, 'audio_soundtrack_mode': eff_audio_mode, 'subject_stance_posture': resolved_stance, 'body_choreography_preset': resolved_choreo, 'camera_trajectory_arc': resolved_arc, 'background_extras_crowd': resolved_extras, 'main_cast_count': int(cast_info['main_cast_count']), 'main_subjects': list(cast_info.get('main_subjects', [])), 'active_subject_count': int(cast_info.get('active_subject_count', 0)), 'active_subjects': list(cast_info.get('active_subjects', [])), 'scene_archetype': str(cast_info['scene_archetype']), 'has_background_extras': bool(cast_info['has_background_extras']), 'cast_continuity_lock': str(cast_info['cast_continuity_lock']), 'is_multi_subject_crowd': bool(dir_3ax['is_multi_subject_crowd']), 'prompt_engine_mode': prompt_mode_tag, 'is_licensed': bool(is_licensed), 'auto_negative_prompt': auto_adaptive_neg, 'custom_negative_override_active': bool(custom_neg_str)}
+    resolved_meta = {'master_duration': resolved_duration, 'duration_seconds': dur_seconds_val, 'style_target': resolved_style, 'camera_zoom': resolved_zoom, 'lighting_ambient': resolved_lighting, 'color_saturation_strength': float(sat_strength_val), 'subject_1_age': age_prof_final['age_label'] or ('species-auto' if is_non_human_final else 'auto'), 'subject_1_age_num': age_years_val, 'is_non_human_subject': is_non_human_final, 'subject_species_category': str(subj_tax_final['category']), 'matched_subject_species': str(subj_tax_final['matched_species']), 'age_difference': resolved_age_diff, 'camera_movement': resolved_cam_move, 'allow_camera_movement': bool(allow_cam_move), 'scene_continuity_mode': str(scene_continuity_mode), 'resolved_scene_continuity_mode': str(resolved_continuity_mode), 'content_rating_mode': str(content_rating_mode), 'content_rating_tier': rating_tier, 'audio_soundtrack_mode': eff_audio_mode, 'subject_stance_posture': resolved_stance, 'body_choreography_preset': resolved_choreo, 'camera_trajectory_arc': resolved_arc, 'background_extras_crowd': resolved_extras, 'main_cast_count': int(cast_info['main_cast_count']), 'main_subjects': list(cast_info.get('main_subjects', [])), 'active_subject_count': int(cast_info.get('active_subject_count', 0)), 'active_subjects': list(cast_info.get('active_subjects', [])), 'scene_archetype': str(cast_info['scene_archetype']), 'has_background_extras': bool(cast_info['has_background_extras']), 'cast_continuity_lock': str(cast_info['cast_continuity_lock']), 'is_multi_subject_crowd': bool(dir_3ax['is_multi_subject_crowd']), 'prompt_engine_mode': prompt_mode_tag, 'is_licensed': bool(is_licensed), 'auto_negative_prompt': auto_adaptive_neg, 'auto_generated_negative_prompt': auto_adaptive_neg, 'custom_negative_override_active': bool(custom_neg_str)}
     return (block1_clean, block2_clean, adaptive_neg, resolved_meta)
 

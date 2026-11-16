@@ -17,19 +17,26 @@ class EzCinematrixVideoLoaderAdapter:
     """Adapter managing dual video UNETs, dual VAEs, and Audio/Video + Locked Turbo LoRA stacks."""
 
     @staticmethod
-    def load_stack(video_unet_fl2va, video_unet_ref2va, video_clip_name, clip_type, video_vae_name, audio_vae_name, video_lora_1, lora_1_video_strength, lora_1_audio_strength, video_lora_2, lora_2_video_strength, lora_2_audio_strength, video_lora_3, lora_3_video_strength, lora_3_audio_strength, video_turbo_lora_LOCKED, turbo_video_strength, turbo_audio_strength, shift_video, shift_audio, enable_fp16_accumulation, lora_1_vis_strength=1.0, lora_1_clip_strength=0.0, lora_2_vis_strength=1.0, lora_2_clip_strength=0.0, lora_3_vis_strength=1.0, lora_3_clip_strength=0.0, video_lora_4='None', lora_4_video_strength=0.2, lora_4_vis_strength=1.0, lora_4_audio_strength=0.0, lora_4_clip_strength=0.0, enable_video_lora_1=True, enable_video_lora_2=True, enable_video_lora_3=True, enable_video_lora_4=True, enable_video_turbo_lora=True, turbo_vis_strength=1.0, cinematrix_bus=None, video_model_spec=None, video_lora_spec=None, **_extra_kwargs):
+    def load_stack(video_unet_fl2va, video_unet_ref2va, video_clip_name, clip_type, video_vae_name, audio_vae_name, video_lora_1, lora_1_video_strength, lora_1_audio_strength, video_lora_2, lora_2_video_strength, lora_2_audio_strength, video_lora_3, lora_3_video_strength, lora_3_audio_strength, video_turbo_lora_LOCKED, turbo_video_strength, turbo_audio_strength, shift_video, shift_audio, enable_fp16_accumulation, lora_1_vis_strength=1.0, lora_1_clip_strength=0.0, lora_2_vis_strength=1.0, lora_2_clip_strength=0.0, lora_3_vis_strength=1.0, lora_3_clip_strength=0.0, video_lora_4='None', lora_4_video_strength=0.2, lora_4_vis_strength=1.0, lora_4_audio_strength=0.0, lora_4_clip_strength=0.0, enable_video_lora_1=True, enable_video_lora_2=True, enable_video_lora_3=True, enable_video_lora_4=True, enable_video_turbo_lora=True, turbo_vis_strength=1.0, cinematrix_bus=None, video_model_spec=None, video_lora_spec=None, remote_hub_mode='local_priority', **_extra_kwargs):
         bus = dict(cinematrix_bus) if isinstance(cinematrix_bus, dict) else {}
-        vm_spec = video_model_spec if isinstance(video_model_spec, dict) else bus.get('civitai_video_model_spec') if isinstance(bus.get('civitai_video_model_spec'), dict) else None
-        vl_spec = video_lora_spec if isinstance(video_lora_spec, dict) else bus.get('civitai_video_lora_spec') if isinstance(bus.get('civitai_video_lora_spec'), dict) else None
+        hub_override = str(remote_hub_mode or 'local_priority').strip().lower().startswith('hub_override')
+        vm_spec = video_model_spec if isinstance(video_model_spec, dict) else None
+        vl_spec = video_lora_spec if isinstance(video_lora_spec, dict) else None
         if isinstance(vm_spec, dict):
             if str(vm_spec.get('modality', 'VIDEO')).upper() != 'VIDEO':
                 raise ValueError('[EZ-MODALITY-LOCK] Bild-checkpoint (KREA2/Flux/SDXL) får EJ skickas till EZ [05] Video Loader!')
-            spec_vunet = str(vm_spec.get('video_unet_fl2va', 'None') or 'None')
+            spec_vunet = str(vm_spec.get('video_unet_fl2va', 'None') or 'None').strip()
             has_spec_vunet = bool(spec_vunet and spec_vunet != 'None' and (not _is_non_unet_or_image_only_for_video(spec_vunet)))
+            has_local_vunet = bool(video_unet_fl2va and str(video_unet_fl2va).strip() not in ('', 'None'))
             if has_spec_vunet:
-                video_unet_fl2va = spec_vunet
-                if vm_spec.get('clip_type'):
-                    clip_type = str(vm_spec['clip_type'])
+                if hub_override or (not has_local_vunet):
+                    tag_m = 'HUB-OVERRIDE' if hub_override else 'HUB-FALLBACK'
+                    print(f'[EZ-05-{tag_m}] 🌐 Använder Video-UNet från [10]: {spec_vunet}')
+                    video_unet_fl2va = spec_vunet
+                    if vm_spec.get('clip_type'):
+                        clip_type = str(vm_spec['clip_type'])
+                elif str(video_unet_fl2va).strip() != spec_vunet:
+                    print(f'[EZ-05-LOCAL-PRIORITY] 🛡️ Behåller lokal Video-UNet "{video_unet_fl2va}" (ignorerar [10] "{spec_vunet}")')
             if (not video_clip_name or video_clip_name == 'None') and vm_spec.get('video_clip_name') and (vm_spec['video_clip_name'] != 'None'):
                 video_clip_name = str(vm_spec['video_clip_name'])
             if (not video_vae_name or video_vae_name == 'None') and vm_spec.get('video_vae_name') and (vm_spec['video_vae_name'] != 'None'):
@@ -47,22 +54,40 @@ class EzCinematrixVideoLoaderAdapter:
         if isinstance(vl_spec, dict):
             if str(vl_spec.get('modality', 'VIDEO')).upper() != 'VIDEO':
                 raise ValueError('[EZ-MODALITY-LOCK] Bild-LoRA (KREA2/Flux/SDXL) får EJ skickas till EZ [05] Video Loader!')
-            spec_vloras = vl_spec.get('video_loras')
-            if isinstance(spec_vloras, list) and any((item[0] != 'None' for item in spec_vloras if isinstance(item, (list, tuple)) and len(item) >= 2)):
-                parsed_vloras = [(str(item[0]), float(item[1]), float(item[2]) if len(item) >= 3 else 0.0, float(item[3]) if len(item) >= 4 else 1.0, float(item[4]) if len(item) >= 5 else 0.0) for item in spec_vloras if isinstance(item, (list, tuple)) and len(item) >= 2]
-                while len(parsed_vloras) < 4:
-                    parsed_vloras.append(raw_lora_entries[len(parsed_vloras)])
-                raw_lora_entries = parsed_vloras[:4]
-            spec_venables = vl_spec.get('video_enables')
-            if isinstance(spec_venables, list) and len(spec_venables) >= 4:
-                vslot_enables = [bool(vslot_enables[idx] and bool(spec_venables[idx])) for idx in range(4)]
-            if 'enable_video_turbo_lora' in vl_spec:
-                vturbo_enabled = bool(vturbo_enabled and bool(vl_spec.get('enable_video_turbo_lora', True)))
-            if vl_spec.get('video_turbo_lora') and vl_spec['video_turbo_lora'] != 'None':
-                video_turbo_lora_LOCKED = str(vl_spec['video_turbo_lora'])
-                turbo_video_strength = float(vl_spec.get('turbo_video_strength', turbo_video_strength))
-                turbo_audio_strength = float(vl_spec.get('turbo_audio_strength', turbo_audio_strength))
-                turbo_vis_strength = float(vl_spec.get('turbo_vis_strength', turbo_vis_strength))
+            spec_vloras = vl_spec.get('video_loras') if isinstance(vl_spec.get('video_loras'), list) else []
+            spec_venables = vl_spec.get('video_enables') if isinstance(vl_spec.get('video_enables'), list) else [True, True, True, True]
+            merged_vloras = list(raw_lora_entries)
+            for idx in range(min(4, len(spec_vloras))):
+                it = spec_vloras[idx]
+                if not (isinstance(it, (list, tuple)) and len(it) >= 2):
+                    continue
+                rem_name = str(it[0] or 'None').strip()
+                rem_en = bool(spec_venables[idx]) if idx < len(spec_venables) else True
+                if not rem_en or rem_name in ('', 'None'):
+                    continue
+                rem_tuple = (rem_name, float(it[1]), float(it[2]) if len(it) >= 3 else 0.0, float(it[3]) if len(it) >= 4 else 1.0, float(it[4]) if len(it) >= 5 else 0.0)
+                loc_name = str(raw_lora_entries[idx][0] or 'None').strip()
+                has_loc = loc_name not in ('', 'None')
+                if hub_override:
+                    merged_vloras[idx] = rem_tuple
+                    vslot_enables[idx] = True
+                    print(f'[EZ-05-HUB-OVERRIDE] 🌐 [10] Recipe Hub styr Video-LoRA Slot {idx + 1}: {rem_name} ({rem_tuple[1]:.2f})')
+                elif (not has_loc) and vslot_enables[idx]:
+                    merged_vloras[idx] = rem_tuple
+                    print(f'[EZ-05-HUB-FALLBACK] 🌐 Fyller tom Video-LoRA Slot {idx + 1} från [10]: {rem_name} ({rem_tuple[1]:.2f})')
+                elif has_loc and loc_name != rem_name:
+                    print(f'[EZ-05-LOCAL-PRIORITY] 🛡️ Behåller lokal Video-LoRA Slot {idx + 1} "{loc_name}" (ignorerar [10] "{rem_name}")')
+            raw_lora_entries = merged_vloras
+            rem_turbo = str(vl_spec.get('video_turbo_lora') or 'None').strip()
+            rem_turbo_en = bool(vl_spec.get('enable_video_turbo_lora', True))
+            loc_turbo = str(video_turbo_lora_LOCKED or 'None').strip()
+            if rem_turbo_en and rem_turbo not in ('', 'None'):
+                if hub_override or (loc_turbo in ('', 'None') and vturbo_enabled):
+                    video_turbo_lora_LOCKED = rem_turbo
+                    vturbo_enabled = True
+                    turbo_video_strength = float(vl_spec.get('turbo_video_strength', turbo_video_strength))
+                    turbo_audio_strength = float(vl_spec.get('turbo_audio_strength', turbo_audio_strength))
+                    turbo_vis_strength = float(vl_spec.get('turbo_vis_strength', turbo_vis_strength))
         lora_entries = []
         for idx_v, ve in enumerate(raw_lora_entries):
             is_on = vslot_enables[idx_v] if idx_v < len(vslot_enables) else True
@@ -88,20 +113,20 @@ class EzCinematrixVideoLoaderAdapter:
         styled_vloras = []
         for vle in lora_entries:
             vln_low = str(vle[0] or '').lower()
-            if (not is_nsfw) and any((tok in vln_low for tok in nsfw_vlora_pat)):
+            is_nsfw_vlora = any((tok in vln_low for tok in nsfw_vlora_pat))
+            if (not is_nsfw) and is_nsfw_vlora:
                 print(f"[EZ-SFW-GUARD] 🛡️ SFW-läge aktivt i [05] -> Inaktiverar NSFW Video-LoRA: {vle[0]}")
                 styled_vloras.append(('None', 0.0, 0.0, 0.0, 0.0))
                 continue
             v_mult = 1.0
-            if style_low_05 in ('anime', 'cartoonish') and any((tok in vln_low for tok in photo_vlora_pat)):
-                v_mult = 0.0
-            elif style_low_05 == 'original' and any((tok in vln_low for tok in photo_vlora_pat)):
-                v_mult = 0.15
-            elif style_low_05 in ('semi-real', 'unreal-engine-5', 'dark-fantasy-cgi') and any((tok in vln_low for tok in ('snofs', 'photoslider', 'realism_engine'))):
-                v_mult = 0.35 if style_low_05 == 'semi-real' else (0.65 if style_low_05 == 'dark-fantasy-cgi' else 0.50)
-            if has_orc_tusks_05 and ('snofs' in vln_low or 'lip' in vln_low or 'portrait' in vln_low):
-                v_mult = min(v_mult, 0.55)
-            if v_mult <= 1e-04:
+            if not is_nsfw_vlora:
+                if style_low_05 in ('anime', 'cartoonish') and float(vle[1]) > 0.0 and any((tok in vln_low for tok in photo_vlora_pat)):
+                    v_mult = 0.0
+                elif style_low_05 in ('semi-real', 'unreal-engine-5', 'dark-fantasy-cgi') and any((tok in vln_low for tok in ('snofs', 'photoslider', 'realism_engine'))):
+                    v_mult = 0.35 if style_low_05 == 'semi-real' else (0.65 if style_low_05 == 'dark-fantasy-cgi' else 0.50)
+                if has_orc_tusks_05 and ('snofs' in vln_low or 'lip' in vln_low or 'portrait' in vln_low):
+                    v_mult = min(v_mult, 0.55)
+            if v_mult <= 1e-04 and float(vle[1]) > 0.0:
                 styled_vloras.append(('None', 0.0, 0.0, 0.0, 0.0))
             elif abs(v_mult - 1.0) > 1e-03:
                 styled_vloras.append((vle[0], round(float(vle[1]) * v_mult, 4), float(vle[2]), float(vle[3]), round(float(vle[4]) * v_mult, 4)))

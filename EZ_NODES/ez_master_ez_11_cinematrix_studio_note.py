@@ -20,10 +20,10 @@ class EZCinematrixStudioNoteAndGuide:
                     "STRING",
                     {
                         "default": (
-                            "🎬 Studio Notes / EZ [02] Dynamic 360s/72-Shot VLM Scaling, [03] Dialect Sanitizer, [07] 3D Latent Hysteresis & [13] 5-Slot Studio:\n"
-                            "- NEW! 📈 Dynamic Long-Form VLM Token & Context Scaling ([02]): Automatically scales up to 360s (72 shots), raises effective_max_tokens (6144➔8192) & llama_cpp n_ctx (8192➔12288), and enforces a uniform per-shot word quota (~38–68 words/shot) so 4–6 minute videos never truncate before [END_PROMPT].\n"
-                            "- NEW! 🧹 Krea 2 Prose Sanitizer ([02]) & Dialect Weight Normalizer ([03]): Strips (tag:1.2) weight brackets and runaway relative clauses on Krea 2 / Flux while escaping unweighted \\(medium\\) parentheses on Pony V6 XL & Illustrious XL. Both krea2_image_prompt and h3_video_timeline_prompt are 100% open STRING outputs ready for any text preview node.\n"
-                            "- NEW! ⚡ GPU-Vectorized 3D Dual-Threshold Hysteresis & 24-Channel Orthogonal Residual Spike Projection ([07]): Uses 3D max_pool3d hysteresis (seed_hi > 11.2, cand_lo > 6.5) and projects out only the corruptive 24-channel spike axis while preserving 92% of orthogonal skin pore and fabric texture energy."
+                            "🎬 Studio Notes / v3.5 Senaste Uppdateringar (Local-Priority Shield, PRISM 01–09, Audio-Mute Strip & Långfilms-Muxning):\n"
+                            "- NYHET! 🛡️ Local-First LoRA-Skydd i [03] & [05] (remote_hub_mode = local_priority): Dina lokala modell- och LoRA-val i [03]/[05] vinner nu alltid per slot (grön bricka '🛡️ LOKALA VAL VINNER'). Kvarlämnade LoRAs i [10] kan aldrig längre skriva över aktiva slots via bussen!\n"
+                            "- NYHET! 🔇 Audio-Mute Key Strip ([05]) & PRISM Foundry v3.5 (I64 Alpha + Zero-Up Kaiming Guard): Håll lora_X_audio_strength = 0.00 på alla visuella merges (ez_h3_01–04, 07–09) så raderas ensidiga ljudnycklar fysiskt före injektion och 32 kHz Audio-VAE förblir 100 % kristallren. På SingularityV2_PRISM2 kör du ~25–30 % lägre vikt (0.50–0.65 i Slot 1) + shift_video = 5.0.\n"
+                            "- NYHET! 🧹 Qwen3-VL Meta-Direktiv-Scrubber ([02]) & -f ffmetadata Långfilms-Muxning ([08] + [12]): Tvättar bort ekade kompilatorregler ur [Shot 1..N], eliminerar Windows 32k CLI-gräns i FFmpeg via temporär metadatafil och synkar 48 kHz fltp stereo i PyAV."
                         ),
                         "multiline": True,
                     },

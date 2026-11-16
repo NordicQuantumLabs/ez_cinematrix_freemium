@@ -138,13 +138,23 @@ def _resolve_ffmpeg_binary() -> str:
             return ff_exe
     except Exception:
         pass
+    search_bases = list(Path(__file__).resolve().parents)
     try:
         base_p = Path(folder_paths.base_path)
-        for cand in (base_p / 'ffmpeg.exe', base_p.parent / 'ffmpeg.exe', base_p.parent / 'python_embeded' / 'Scripts' / 'ffmpeg.exe', base_p.parent / 'ffmpeg' / 'bin' / 'ffmpeg.exe'):
-            if cand.exists():
-                return str(cand)
+        search_bases = [base_p, base_p.parent] + search_bases
     except Exception:
         pass
+    for parent in search_bases:
+        for cand in (
+            parent / 'ffmpeg.exe',
+            parent / 'ffmpeg' / 'bin' / 'ffmpeg.exe',
+            parent / 'python_embeded' / 'Scripts' / 'ffmpeg.exe',
+            parent / 'python_embedded' / 'Scripts' / 'ffmpeg.exe',
+            parent / 'python_embeded' / 'Library' / 'bin' / 'ffmpeg.exe',
+            parent / 'python_embedded' / 'Library' / 'bin' / 'ffmpeg.exe',
+        ):
+            if cand.exists():
+                return str(cand)
     return ''
 
 def _vault_gaussian_blur_2d(tensor_bchw: torch.Tensor, radius: float) -> torch.Tensor:
@@ -550,10 +560,10 @@ def _suppress_vocal_formant_chatter_in_sfx(w_np: np.ndarray, sr: int, audio_mode
         is_non_vocal_sfx = ('sfx_only' in mode_low or 'no_music' in mode_low or mode_low == 'sfx_only')
         is_inst_bgm = ('instrumental' in mode_low)
         if is_non_vocal_sfx or is_inst_bgm:
-            f0_notch = 1.0 - (0.85 if is_non_vocal_sfx else 0.45) * np.exp(-0.5 * ((freqs - 240.0) / 135.0) ** 2)
-            f1_notch = 1.0 - (0.88 if is_non_vocal_sfx else 0.56) * np.exp(-0.5 * ((freqs - 680.0) / 360.0) ** 2)
-            f2_notch = 1.0 - (0.88 if is_non_vocal_sfx else 0.58) * np.exp(-0.5 * ((freqs - 1850.0) / 700.0) ** 2)
-            f3_notch = 1.0 - (0.76 if is_non_vocal_sfx else 0.48) * np.exp(-0.5 * ((freqs - 3100.0) / 560.0) ** 2)
+            f0_notch = 1.0 - (0.42 if is_non_vocal_sfx else 0.30) * np.exp(-0.5 * ((freqs - 240.0) / 135.0) ** 2)
+            f1_notch = 1.0 - (0.46 if is_non_vocal_sfx else 0.36) * np.exp(-0.5 * ((freqs - 680.0) / 360.0) ** 2)
+            f2_notch = 1.0 - (0.46 if is_non_vocal_sfx else 0.38) * np.exp(-0.5 * ((freqs - 1850.0) / 700.0) ** 2)
+            f3_notch = 1.0 - (0.35 if is_non_vocal_sfx else 0.28) * np.exp(-0.5 * ((freqs - 3100.0) / 560.0) ** 2)
             eq_curve = (eq_curve * f0_notch * f1_notch * f2_notch * f3_notch).astype(np.float32)
         if arr.ndim == 2:
             spec = np.fft.rfft(arr, axis=0)
@@ -566,7 +576,7 @@ def _suppress_vocal_formant_chatter_in_sfx(w_np: np.ndarray, sr: int, audio_mode
             env = np.sqrt(np.convolve(np.mean(arr ** 2, axis=-1) if arr.ndim == 2 else arr ** 2, np.ones(win_len, dtype=np.float32) / float(win_len), mode='same') + 1e-08)
             p85 = float(np.percentile(env, 85.0))
             if p85 > 1e-05:
-                duck_gain = np.clip(p85 / np.maximum(env, p85), 0.32, 1.0).astype(np.float32)
+                duck_gain = np.clip(p85 / np.maximum(env, p85), 0.62, 1.0).astype(np.float32)
                 arr = arr * (duck_gain[:, None] if arr.ndim == 2 else duck_gain)
         fade_len = min(int(sr * 0.015), n_s // 8)
         if fade_len >= 8:
@@ -582,43 +592,67 @@ def _suppress_vocal_formant_chatter_in_sfx(w_np: np.ndarray, sr: int, audio_mode
     except Exception:
         return w_np
 
+def _decode_single_audio_chunk_safe(audio_vae, raw_lat_in, default_sr: int = 32000):
+    aud_in = raw_lat_in
+    if getattr(raw_lat_in, 'is_nested', False) or hasattr(raw_lat_in, 'tensors'):
+        t_l = list(raw_lat_in.tensors) if hasattr(raw_lat_in, 'tensors') else list(raw_lat_in.unbind())
+        aud_in = t_l[1] if len(t_l) > 1 else t_l[0]
+    if not isinstance(aud_in, torch.Tensor) or aud_in.numel() == 0:
+        return (None, default_sr)
+    aud_cpu = torch.nan_to_num(aud_in.detach().cpu().float(), nan=0.0, posinf=8.0, neginf=-8.0)
+    sr_out = int(default_sr)
+    try:
+        from comfy_extras.nodes_audio import vae_decode_audio as _comfy_vae_decode_audio
+    except Exception:
+        _comfy_vae_decode_audio = None
+    if callable(_comfy_vae_decode_audio):
+        t_steps = int(aud_cpu.shape[-1]) if aud_cpu.ndim >= 2 else 0
+        tile_attempts = [(None, None), (200, 25)] if t_steps <= 320 else [(200, 25), (None, None)]
+        for (t_x, ov_x) in tile_attempts:
+            try:
+                res_d = _comfy_vae_decode_audio(audio_vae, {'samples': aud_cpu}, tile=t_x, overlap=ov_x)
+                if isinstance(res_d, dict) and isinstance(res_d.get('waveform'), torch.Tensor):
+                    sr_out = int(res_d.get('sample_rate', sr_out) or sr_out)
+                    arr_np = _normalize_single_audio_tensor_to_np(res_d['waveform'])
+                    if arr_np is not None and arr_np.shape[0] >= 64:
+                        return (arr_np, sr_out)
+            except Exception:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                continue
+    for use_tiled in (False, True):
+        try:
+            dec_t = audio_vae.decode_tiled(aud_cpu, tile_x=200, tile_y=2, overlap=25) if use_tiled else audio_vae.decode(aud_cpu)
+            if isinstance(dec_t, dict) and 'waveform' in dec_t:
+                sr_out = int(dec_t.get('sample_rate', sr_out) or sr_out)
+                dec_t = dec_t['waveform']
+            if isinstance(dec_t, torch.Tensor):
+                arr_np = _normalize_single_audio_tensor_to_np(dec_t)
+                if arr_np is not None and arr_np.shape[0] >= 64:
+                    return (arr_np, sr_out)
+        except Exception:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            continue
+    return (None, sr_out)
+
 def _decode_audio_latent_to_wav(audio_vae, audio_latent, temp_wav_path: Path, audio_win_latents: list=None, overlap_t: int=2, audio_soundtrack_mode: str='', **kwargs) -> bool:
     if audio_vae is None or (audio_latent is None and (not audio_win_latents)):
         return False
     try:
+        comfy.model_management.soft_empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         sr = _resolve_audio_vae_sample_rate(audio_vae)
         native_fps = max(1.0, float(kwargs.get('native_fps', 24.0) or 24.0))
         target_dur_sec = float(kwargs.get('target_duration_sec', 0.0) or 0.0)
         w_np = None
-        if audio_latent is not None:
-            try:
-                aud_in = audio_latent
-                if getattr(audio_latent, 'is_nested', False) or hasattr(audio_latent, 'tensors'):
-                    t_l = list(audio_latent.tensors) if hasattr(audio_latent, 'tensors') else list(audio_latent.unbind())
-                    aud_in = t_l[1] if len(t_l) > 1 else t_l[0]
-                wav_tensor = audio_vae.decode(aud_in)
-                if isinstance(wav_tensor, dict) and 'waveform' in wav_tensor:
-                    sr = int(wav_tensor.get('sample_rate', sr) or sr)
-                    wav_tensor = wav_tensor['waveform']
-                cand_np = _normalize_single_audio_tensor_to_np(wav_tensor)
-                if cand_np is not None and cand_np.shape[0] >= 64:
-                    w_np = cand_np
-            except Exception:
-                w_np = None
-        if w_np is None and isinstance(audio_win_latents, list) and len(audio_win_latents) >= 2:
+        if isinstance(audio_win_latents, list) and len(audio_win_latents) >= 2:
             pcm_accum = None
             ov_tok = max(1, int(overlap_t or 1))
             ov_px = max(1, 17 * (ov_tok // 5) + sum((1, 4, 4, 4, 4)[:ov_tok % 5]))
             for (w_lat, _cur_v_len) in audio_win_latents:
-                aud_in = w_lat
-                if getattr(w_lat, 'is_nested', False) or hasattr(w_lat, 'tensors'):
-                    t_l = list(w_lat.tensors) if hasattr(w_lat, 'tensors') else list(w_lat.unbind())
-                    aud_in = t_l[1] if len(t_l) > 1 else t_l[0]
-                dec_w = audio_vae.decode(aud_in)
-                if isinstance(dec_w, dict) and 'waveform' in dec_w:
-                    sr = int(dec_w.get('sample_rate', sr) or sr)
-                    dec_w = dec_w['waveform']
-                cur_pcm = _normalize_single_audio_tensor_to_np(dec_w)
+                (cur_pcm, sr) = _decode_single_audio_chunk_safe(audio_vae, w_lat, default_sr=sr)
                 if cur_pcm is None or cur_pcm.shape[0] < 16:
                     continue
                 seg_f_cnt = max(22, int(_cur_v_len or 243))
@@ -643,7 +677,10 @@ def _decode_audio_latent_to_wav(audio_vae, audio_latent, temp_wav_path: Path, au
                     else:
                         pcm_accum = np.concatenate([pcm_accum, cur_pcm[ov_s:]], axis=0)
             w_np = pcm_accum
+        if w_np is None and audio_latent is not None:
+            (w_np, sr) = _decode_single_audio_chunk_safe(audio_vae, audio_latent, default_sr=sr)
         if w_np is None or w_np.size == 0:
+            print('[EZ-VAULT-AUDIO] ⚠️ Audio-VAE returnerade tom vågform — kontrollera att minimax_h3_audio_vae_fp32.safetensors är vald i EZ [05].')
             return False
         if target_dur_sec > 0.1:
             tgt_total_samples = max(64, int(round(target_dur_sec * float(sr))))
@@ -652,7 +689,13 @@ def _decode_audio_latent_to_wav(audio_vae, audio_latent, temp_wav_path: Path, au
         w_np = np.nan_to_num(w_np, nan=0.0, posinf=0.0, neginf=0.0)
         eff_aud_mode = str(audio_soundtrack_mode or '').strip() or 'sfx_only'
         w_np = _suppress_vocal_formant_chatter_in_sfx(w_np, sr, eff_aud_mode)
+        rms_val = float(np.sqrt(np.mean(w_np.astype(np.float32) ** 2)) + 1e-09)
         peak = float(np.max(np.abs(w_np)))
+        if 1e-05 < rms_val < 0.038 and peak > 1e-05:
+            boost_g = min(8.0, 0.11 / rms_val, 0.78 / peak)
+            if boost_g > 1.05:
+                w_np = w_np * boost_g
+                peak = float(np.max(np.abs(w_np)))
         if peak > 0.95:
             w_np = w_np * (0.95 / peak)
         pcm16 = np.clip(w_np * 32767.0, -32768, 32767).astype(np.int16)
@@ -663,12 +706,181 @@ def _decode_audio_latent_to_wav(audio_vae, audio_latent, temp_wav_path: Path, au
             wf.setframerate(sr)
             wf.writeframes(pcm16.tobytes())
         return temp_wav_path.exists() and temp_wav_path.stat().st_size > 128
+    except Exception as aud_exc:
+        print(f'[EZ-VAULT-AUDIO] ⚠️ Fel vid avkodning av MiniMax H3 ljud-latent: {aud_exc}')
+        return False
+
+def _escape_ffmetadata_val(raw_val: str) -> str:
+    s = str(raw_val or '')
+    s = s.replace('\\', '\\\\').replace('=', '\\=').replace(';', '\\;').replace('#', '\\#')
+    return s.replace('\r\n', '\n').replace('\r', '\n').replace('\n', '\\\n')
+
+def _build_compact_container_comment_json(metadata_payload: dict, max_chars: int = 3500) -> str:
+    if not isinstance(metadata_payload, dict) or not metadata_payload:
+        return 'EZ Cinematrix Studio v2.6'
+    raw_json = json.dumps(metadata_payload, ensure_ascii=False)
+    if len(raw_json) <= int(max_chars):
+        return raw_json
+    compact = {
+        'generator': metadata_payload.get('generator', 'EZ Cinematrix Studio v2.6'),
+        'timestamp': metadata_payload.get('timestamp', ''),
+        'video_filename': metadata_payload.get('video_filename', ''),
+        'resolution': metadata_payload.get('resolution', ''),
+        'frames': metadata_payload.get('frames', 0),
+        'final_fps': metadata_payload.get('final_fps', 24.0),
+        'active_video_unet': metadata_payload.get('active_video_unet', ''),
+        'active_video_loras': metadata_payload.get('active_video_loras', []),
+        'video_sampler_seed': metadata_payload.get('video_sampler_seed', 0),
+        'sidecar': f"{Path(str(metadata_payload.get('video_filename', 'video'))).stem}.metadata.json",
+    }
+    out_s = json.dumps(compact, ensure_ascii=False)
+    return out_s[:int(max_chars)] if len(out_s) > int(max_chars) else out_s
+
+def _write_ffmetadata_file(meta_path, output_stem: str, metadata_payload) -> bool:
+    try:
+        mp_obj = Path(meta_path)
+        if isinstance(metadata_payload, dict):
+            desc_str = str(
+                metadata_payload.get('h3_video_timeline_prompt')
+                or metadata_payload.get('krea2_image_prompt')
+                or 'EZ Cinematrix Studio v2.6'
+            )[:1024]
+            comment_str = json.dumps(metadata_payload, ensure_ascii=False) if metadata_payload else 'EZ Cinematrix Studio v2.6'
+        else:
+            desc_str = 'EZ Cinematrix Studio v2.6'
+            comment_str = str(metadata_payload or 'EZ Cinematrix Studio v2.6')
+        lines = [
+            ';FFMETADATA1',
+            f'title={_escape_ffmetadata_val(output_stem)}',
+            'artist=Nordic Quantum Labs // EZ Cinematrix Studio v2.6',
+            f'description={_escape_ffmetadata_val(desc_str)}',
+            f'comment={_escape_ffmetadata_val(comment_str)}',
+            '',
+        ]
+        mp_obj.write_text('\n'.join(lines), encoding='utf-8')
+        return mp_obj.exists() and mp_obj.stat().st_size > 12
     except Exception:
         return False
+
+def _wav_has_audible_signal(wav_path: Path, min_peak: float = 1e-4) -> bool:
+    if wav_path is None or not wav_path.exists() or wav_path.stat().st_size < 256:
+        return False
+    try:
+        with wave.open(str(wav_path), 'rb') as wf:
+            n_f = wf.getnframes()
+            if n_f < 32:
+                return False
+            raw = wf.readframes(min(n_f, 48000 * 15))
+        if not raw:
+            return False
+        arr = np.frombuffer(raw, dtype=np.int16)
+        if arr.size == 0:
+            return False
+        peak = float(np.max(np.abs(arr))) / 32768.0
+        return peak >= float(min_peak)
+    except Exception:
+        return wav_path.stat().st_size > 4096
+
+def _prepare_external_audio_wav_pyav(source_path: Path, out_wav: Path, start_offset_sec: float, target_dur_sec: float, fade_out_sec: float = 1.2, target_sr: int = 48000) -> bool:
+    if source_path is None or not source_path.exists():
+        return False
+    try:
+        import av
+        in_c = av.open(str(source_path), mode='r')
+        if not in_c.streams.audio:
+            in_c.close()
+            return False
+        a_st = in_c.streams.audio[0]
+        resampler = av.AudioResampler(format='fltp', layout='stereo', rate=int(target_sr))
+        max_s = max(256, int(round(max(0.5, float(target_dur_sec)) * float(target_sr))))
+        skip_s = max(0, int(round(max(0.0, float(start_offset_sec)) * float(target_sr))))
+        chunks = []
+        collected_s = 0
+        seen_s = 0
+
+        def _drain_batch(batch_obj) -> bool:
+            nonlocal collected_s, seen_s
+            if not isinstance(batch_obj, list):
+                batch_obj = [batch_obj] if batch_obj is not None else []
+            for of in batch_obj:
+                arr = np.asarray(of.to_ndarray(), dtype=np.float32)
+                if arr.ndim == 2 and arr.shape[0] == 2:
+                    arr = arr.T
+                elif arr.ndim == 2 and arr.shape[0] == 1 and arr.shape[1] % 2 == 0:
+                    arr = arr.reshape(-1, 2)
+                elif arr.ndim == 1:
+                    arr = arr.reshape(-1, 2) if arr.size % 2 == 0 else np.stack([arr, arr], axis=-1)
+                elif arr.ndim != 2 or arr.shape[1] != 2:
+                    flat = arr.reshape(-1)
+                    pn = (flat.size // 2) * 2
+                    if pn < 2:
+                        continue
+                    arr = flat[:pn].reshape(-1, 2)
+                n_s = int(arr.shape[0])
+                if seen_s + n_s <= skip_s:
+                    seen_s += n_s
+                    continue
+                if seen_s < skip_s:
+                    arr = arr[skip_s - seen_s:]
+                    seen_s = skip_s
+                need = max_s - collected_s
+                if arr.shape[0] > need:
+                    arr = arr[:need]
+                chunks.append(np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=-1.0))
+                collected_s += int(arr.shape[0])
+                if collected_s >= max_s:
+                    return True
+            return False
+
+        for frm in in_c.decode(a_st):
+            if _drain_batch(resampler.resample(frm)):
+                break
+        if collected_s < max_s:
+            try:
+                _drain_batch(resampler.resample(None))
+            except Exception:
+                pass
+        in_c.close()
+        if not chunks or collected_s < 128:
+            return False
+        w_f = np.concatenate(chunks, axis=0)
+        fade_n = min(int(round(max(0.0, float(fade_out_sec)) * float(target_sr))), w_f.shape[0] // 3)
+        if fade_n >= 64:
+            curve = (0.5 * (1.0 + np.cos(np.linspace(0.0, np.pi, fade_n, dtype=np.float32))))[:, None]
+            w_f[-fade_n:] = w_f[-fade_n:] * curve
+        pcm16 = np.clip(w_f * 32767.0, -32768.0, 32767.0).astype(np.int16)
+        out_wav.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(out_wav), 'wb') as wf:
+            wf.setnchannels(2)
+            wf.setsampwidth(2)
+            wf.setframerate(int(target_sr))
+            wf.writeframes(pcm16.tobytes())
+        return out_wav.exists() and out_wav.stat().st_size > 1024
+    except Exception as exc:
+        print(f'[EZ-VAULT-AUDIO] ⚠️ PyAV-förberedelse av externt ljudspår misslyckades: {exc}')
+        return False
+
+def _verify_media_has_audio_stream(media_path: Path) -> bool:
+    if media_path is None or not media_path.exists() or media_path.stat().st_size < 512:
+        return False
+    try:
+        import av
+        c = av.open(str(media_path), mode='r')
+        has_a = bool(c.streams.audio and len(c.streams.audio) > 0)
+        c.close()
+        return has_a
+    except Exception:
+        try:
+            raw_b = media_path.read_bytes()
+            return (b'soun' in raw_b) or (b'mp4a' in raw_b) or (b'Opus' in raw_b)
+        except Exception:
+            return False
 
 def _encode_video_with_pyav(frames_bhwc: torch.Tensor, fps: float, output_path: Path, codec: str, quality: int, audio_wav_path: Path=None, audio_codec: str='Auto', save_metadata: bool=True, metadata_payload: dict=None) -> bool:
     if not isinstance(frames_bhwc, torch.Tensor) or frames_bhwc.shape[0] == 0:
         return False
+    in_aud = None
+    container = None
     try:
         import av
         from fractions import Fraction
@@ -683,8 +895,8 @@ def _encode_video_with_pyav(frames_bhwc: torch.Tensor, fps: float, output_path: 
         if save_metadata and isinstance(metadata_payload, dict):
             try:
                 container.metadata['title'] = str(metadata_payload.get('video_filename') or output_path.stem)
-                container.metadata['artist'] = 'EZ Cinematrix Studio v2.6'
-                container.metadata['comment'] = json.dumps(metadata_payload, ensure_ascii=False)
+                container.metadata['artist'] = 'Nordic Quantum Labs // EZ Cinematrix Studio v2.6'
+                container.metadata['comment'] = _build_compact_container_comment_json(metadata_payload)
             except Exception:
                 pass
         v_stream = container.add_stream(v_codec, rate=fps_frac)
@@ -693,6 +905,34 @@ def _encode_video_with_pyav(frames_bhwc: torch.Tensor, fps: float, output_path: 
         v_stream.pix_fmt = 'yuv420p'
         if v_codec in ('libx264', 'libx265'):
             v_stream.options = {'crf': crf_val, 'preset': 'fast'}
+        has_audio = audio_wav_path is not None and audio_wav_path.exists() and (str(audio_codec).lower() != 'mute')
+        in_a_stream = None
+        out_a_stream = None
+        aud_resampler = None
+        out_aud_rate = 48000
+        if has_audio:
+            try:
+                in_aud = av.open(str(audio_wav_path), mode='r')
+                if in_aud.streams.audio:
+                    in_a_stream = in_aud.streams.audio[0]
+                    ext_low = str(output_path.suffix).lower()
+                    ac_low = str(audio_codec or 'Auto').lower()
+                    if 'opus' in ac_low or ext_low == '.webm':
+                        a_codec_name = 'libopus'
+                    elif 'flac' in ac_low and ext_low == '.mkv':
+                        a_codec_name = 'flac'
+                    else:
+                        a_codec_name = 'aac'
+                    out_a_stream = container.add_stream(a_codec_name, rate=out_aud_rate)
+                    try:
+                        out_a_stream.bit_rate = 192000
+                    except Exception:
+                        pass
+                    res_fmt = 's16' if a_codec_name == 'flac' else 'fltp'
+                    aud_resampler = av.AudioResampler(format=res_fmt, layout='stereo', rate=out_aud_rate)
+            except Exception as aud_open_exc:
+                print(f'[EZ-VAULT-PYAV] ⚠️ Kunde inte initiera ljudström före muxning: {aud_open_exc}')
+                out_a_stream = None
         chunk_sz = 32
         for s_idx in range(0, n_frames, chunk_sz):
             e_idx = min(n_frames, s_idx + chunk_sz)
@@ -704,26 +944,62 @@ def _encode_video_with_pyav(frames_bhwc: torch.Tensor, fps: float, output_path: 
                     container.mux(pkt)
         for pkt in v_stream.encode():
             container.mux(pkt)
-        has_audio = audio_wav_path is not None and audio_wav_path.exists() and (str(audio_codec).lower() != 'mute')
-        if has_audio:
+        if out_a_stream is not None and in_aud is not None and (in_a_stream is not None):
             try:
-                in_aud = av.open(str(audio_wav_path), mode='r')
-                if in_aud.streams.audio:
-                    in_a_stream = in_aud.streams.audio[0]
-                    a_codec_name = 'aac' if str(output_path.suffix).lower() in ('.mp4', '.mov', '.mkv') else 'libopus'
-                    out_a_stream = container.add_stream(a_codec_name, rate=int(in_a_stream.rate or 44100))
-                    for a_frame in in_aud.decode(in_a_stream):
+                max_aud_samples = max(1024, int(round(float(n_frames) / max(1.0, float(fps)) * float(out_aud_rate))))
+                encoded_samples = 0
+
+                def _encode_resampled_batch(r_batch) -> bool:
+                    nonlocal encoded_samples
+                    if not isinstance(r_batch, list):
+                        r_batch = [r_batch] if r_batch is not None else []
+                    for rf in r_batch:
+                        rf.pts = None
+                        for pkt in out_a_stream.encode(rf):
+                            container.mux(pkt)
+                        encoded_samples += int(getattr(rf, 'samples', 0) or 0)
+                        if encoded_samples >= max_aud_samples:
+                            return True
+                    return False
+
+                for a_frame in in_aud.decode(in_a_stream):
+                    if aud_resampler is not None:
+                        if _encode_resampled_batch(aud_resampler.resample(a_frame)):
+                            break
+                    else:
                         a_frame.pts = None
                         for pkt in out_a_stream.encode(a_frame):
                             container.mux(pkt)
-                    for pkt in out_a_stream.encode():
-                        container.mux(pkt)
+                if aud_resampler is not None and encoded_samples < max_aud_samples:
+                    try:
+                        _encode_resampled_batch(aud_resampler.resample(None))
+                    except Exception:
+                        pass
+                for pkt in out_a_stream.encode():
+                    container.mux(pkt)
+            except Exception as aud_mux_exc:
+                print(f'[EZ-VAULT-PYAV] ⚠️ Fel vid ljudkodning/muxning i PyAV: {aud_mux_exc}')
+        if in_aud is not None:
+            try:
                 in_aud.close()
             except Exception:
                 pass
+            in_aud = None
         container.close()
+        container = None
         return output_path.exists() and output_path.stat().st_size > 512
-    except Exception:
+    except Exception as pyav_err:
+        print(f'[EZ-VAULT-PYAV] ⚠️ Videokodning i PyAV avbröts: {pyav_err}')
+        if in_aud is not None:
+            try:
+                in_aud.close()
+            except Exception:
+                pass
+        if container is not None:
+            try:
+                container.close()
+            except Exception:
+                pass
         return False
 
 _FFMPEG_ENC_CACHE = {}
@@ -797,70 +1073,98 @@ def _encode_video_with_ffmpeg(frames_bhwc: torch.Tensor, fps: float, output_path
             encoder_profiles.append(['-c:v', 'h264_videotoolbox', '-q:v', str(max(35, 100 - int(quality) * 2)), '-pix_fmt', pix_fmt])
         encoder_profiles.append(['-c:v', 'libx264', '-crf', crf_val, '-preset', 'fast', '-profile:v', 'high', '-bf', '2', '-g', '48', '-threads', cpu_thr, '-pix_fmt', pix_fmt])
     has_audio = audio_wav_path is not None and audio_wav_path.exists() and (str(audio_codec).lower() != 'mute')
-    for v_args in encoder_profiles:
-        cmd = [ffmpeg_bin, '-y', '-hide_banner', '-loglevel', 'error', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', f'{w}x{h}', '-pix_fmt', 'rgb24', '-r', f'{max(1.0, float(fps)):.4f}', '-i', '-']
-        if has_audio:
-            cmd.extend(['-i', str(audio_wav_path)])
-        if even_w != w or even_h != h:
-            cmd.extend(['-vf', f'scale={even_w}:{even_h}:flags=lanczos'])
-        cmd.extend(v_args)
-        if has_audio:
-            vid_dur_s = float(n_frames) / max(1.0, float(fps))
-            cmd.extend(['-af', f'aresample=async=1:first_pts=0,apad=whole_dur={vid_dur_s:.3f}', '-t', f'{vid_dur_s:.3f}'])
-            ac_low = str(audio_codec or 'Auto').lower()
-            ab_str = str(audio_bitrate or '192k')
-            if 'opus' in ac_low or (ac_low == 'auto' and cont_low == 'webm'):
-                cmd.extend(['-c:a', 'libopus', '-b:a', ab_str])
-            elif 'flac' in ac_low:
-                cmd.extend(['-c:a', 'flac'])
-            elif 'wav' in ac_low or 'pcm' in ac_low:
-                cmd.extend(['-c:a', 'pcm_s16le'])
+    ffmeta_tmp = output_path.parent / f'.ez_ffmeta_{output_path.stem}_{os.getpid()}.txt'
+    fferr_tmp = output_path.parent / f'.ez_fferr_{output_path.stem}_{os.getpid()}.log'
+    has_ffmeta_file = False
+    if save_metadata:
+        has_ffmeta_file = _write_ffmetadata_file(ffmeta_tmp, output_path.stem, metadata_payload if isinstance(metadata_payload, dict) else {})
+    try:
+        for v_args in encoder_profiles:
+            cmd = [ffmpeg_bin, '-y', '-hide_banner', '-loglevel', 'error', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', f'{w}x{h}', '-pix_fmt', 'rgb24', '-r', f'{max(1.0, float(fps)):.4f}', '-i', '-']
+            if has_audio:
+                cmd.extend(['-i', str(audio_wav_path)])
+            if save_metadata and has_ffmeta_file:
+                cmd.extend(['-f', 'ffmetadata', '-i', str(ffmeta_tmp)])
+            cmd.extend(['-map', '0:v:0'])
+            if has_audio:
+                cmd.extend(['-map', '1:a:0'])
+            if even_w != w or even_h != h:
+                cmd.extend(['-vf', f'scale={even_w}:{even_h}:flags=lanczos'])
+            cmd.extend(v_args)
+            if has_audio:
+                vid_dur_s = float(n_frames) / max(1.0, float(fps))
+                cmd.extend(['-af', f'aresample=async=1:first_pts=0,apad=whole_dur={vid_dur_s:.3f}', '-t', f'{vid_dur_s:.3f}'])
+                ac_low = str(audio_codec or 'Auto').lower()
+                ab_str = str(audio_bitrate or '192k')
+                if 'opus' in ac_low or (ac_low == 'auto' and cont_low == 'webm'):
+                    cmd.extend(['-c:a', 'libopus', '-b:a', ab_str])
+                elif 'flac' in ac_low:
+                    cmd.extend(['-c:a', 'flac'])
+                elif 'wav' in ac_low or 'pcm' in ac_low:
+                    cmd.extend(['-c:a', 'pcm_s16le'])
+                else:
+                    cmd.extend(['-c:a', 'aac', '-b:a', ab_str])
+                if crop_to_audio:
+                    cmd.append('-shortest')
+            if save_metadata:
+                if has_ffmeta_file:
+                    meta_in_idx = '2' if has_audio else '1'
+                    cmd.extend(['-map_metadata', meta_in_idx])
+                else:
+                    cmd.extend(['-metadata', f'title={output_path.stem}', '-metadata', 'artist=Nordic Quantum Labs // EZ Cinematrix Studio v2.6'])
             else:
-                cmd.extend(['-c:a', 'aac', '-b:a', ab_str])
-            if crop_to_audio:
-                cmd.append('-shortest')
-        if save_metadata:
-            if isinstance(metadata_payload, dict) and metadata_payload:
-                meta_json_str = json.dumps(metadata_payload, ensure_ascii=False)
-                desc_str = str(metadata_payload.get('h3_video_timeline_prompt') or metadata_payload.get('krea2_image_prompt') or 'EZ Cinematrix Studio v2.6')[:1024]
-                cmd.extend([
-                    '-metadata', f'title={output_path.stem}',
-                    '-metadata', 'artist=EZ Cinematrix Studio v2.6',
-                    '-metadata', f'description={desc_str}',
-                    '-metadata', f'comment={meta_json_str}',
-                ])
-            else:
-                cmd.extend(['-metadata', 'comment=EZ Cinematrix Studio v2.6'])
-        else:
-            cmd.extend(['-map_metadata', '-1'])
-        if cont_low in ('mp4', 'mov'):
-            cmd.extend(['-movflags', '+faststart'])
-        cmd.append(str(output_path))
-        proc = None
-        try:
-            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, bufsize=16 * 1024 * 1024)
-            chunk_sz = 32
-            for s_idx in range(0, n_frames, chunk_sz):
-                if proc.poll() is not None:
-                    break
-                e_idx = min(n_frames, s_idx + chunk_sz)
-                batch_u8 = (frames_bhwc[s_idx:e_idx] * 255.0).clamp(0.0, 255.0).to(torch.uint8).contiguous().numpy()
-                proc.stdin.write(memoryview(batch_u8))
+                cmd.extend(['-map_metadata', '-1'])
+            if cont_low in ('mp4', 'mov'):
+                cmd.extend(['-movflags', '+faststart'])
+            cmd.append(str(output_path))
+            proc = None
+            err_fh = None
             try:
-                proc.stdin.close()
-            except Exception:
-                pass
-            proc.wait(timeout=180)
-            if proc.returncode == 0 and output_path.exists() and (output_path.stat().st_size > 512):
-                return True
-        except Exception:
-            if proc is not None:
+                err_fh = open(str(fferr_tmp), 'wb')
+                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=err_fh, bufsize=16 * 1024 * 1024)
+                chunk_sz = 32
+                for s_idx in range(0, n_frames, chunk_sz):
+                    if proc.poll() is not None:
+                        break
+                    e_idx = min(n_frames, s_idx + chunk_sz)
+                    batch_u8 = (frames_bhwc[s_idx:e_idx] * 255.0).clamp(0.0, 255.0).to(torch.uint8).contiguous().numpy()
+                    proc.stdin.write(memoryview(batch_u8))
                 try:
-                    proc.kill()
+                    proc.stdin.close()
                 except Exception:
                     pass
-            if output_path.exists() and output_path.stat().st_size > 4096:
-                return True
+                proc.wait(timeout=180)
+                if err_fh is not None:
+                    err_fh.close()
+                    err_fh = None
+                if proc.returncode == 0 and output_path.exists() and (output_path.stat().st_size > 512):
+                    return True
+                err_msg = fferr_tmp.read_text(encoding='utf-8', errors='replace').strip() if fferr_tmp.exists() else ''
+                enc_lbl = v_args[1] if len(v_args) > 1 else 'ffmpeg'
+                if err_msg:
+                    print(f'[EZ-VAULT-FFMPEG] ⚠️ {enc_lbl} returnerade kod {proc.returncode}: {err_msg[:280]}')
+            except Exception as ff_exc:
+                if err_fh is not None:
+                    try:
+                        err_fh.close()
+                    except Exception:
+                        pass
+                if proc is not None:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                enc_lbl = v_args[1] if len(v_args) > 1 else 'ffmpeg'
+                print(f'[EZ-VAULT-FFMPEG] ⚠️ {enc_lbl} processfel: {ff_exc}')
+                if output_path.exists() and output_path.stat().st_size > 4096 and ((not has_audio) or _verify_media_has_audio_stream(output_path)):
+                    return True
+    finally:
+        for tmp_f in (ffmeta_tmp, fferr_tmp):
+            if tmp_f.exists():
+                try:
+                    tmp_f.unlink()
+                except Exception:
+                    pass
     return _encode_video_with_pyav(frames_bhwc, fps, output_path, codec, quality, audio_wav_path, audio_codec, save_metadata=save_metadata, metadata_payload=metadata_payload)
 
 def _apply_real_upscale_model(frames_bhwc: torch.Tensor, upscale_model_name: str, tile_sz: int=512, target_scale_cap: int=2, batch_step: int=8) -> torch.Tensor:
@@ -1355,11 +1659,11 @@ def decode_and_postprocess_cinema_stream(sampled_video_latent: dict, video_vae, 
                         cur_lf_m = c_lf.mean(dim=(0, 2, 3), keepdim=True)
                         cur_lf_s = torch.clamp(c_lf.std(dim=(0, 2, 3), keepdim=True), min=1e-04)
                         cur_hf_s = torch.clamp(c_hf.std(dim=(0, 2, 3), keepdim=True), min=1e-04)
-                        lf_gain = torch.clamp(w0_lf_std / cur_lf_s, 0.70, 1.01)
-                        hf_gain = torch.clamp(w0_hf_std / cur_hf_s, 0.62, 1.01)
+                        lf_gain = torch.clamp(w0_lf_std / cur_lf_s, 0.76, 1.04)
+                        hf_gain = torch.clamp(w0_hf_std / cur_hf_s, 0.84, 1.06)
                         eff_lf_m = torch.lerp(cur_lf_m, w0_lf_mean, 0.65) if w0_lf_mean is not None else cur_lf_m
                         c_lf_damped = (c_lf - cur_lf_m) * torch.lerp(torch.ones_like(lf_gain), lf_gain, 0.78) + eff_lf_m
-                        c_hf_damped = c_hf * torch.lerp(torch.ones_like(hf_gain), hf_gain, 0.88)
+                        c_hf_damped = c_hf * torch.lerp(torch.ones_like(hf_gain), hf_gain, 0.74)
                         seg_damped = torch.clamp(c_lf_damped + c_hf_damped, 0.0, 1.0).permute(0, 2, 3, 1)
                         seg_f = seg_f.clone()
                         seg_f[:, :, :, :3] = seg_damped.to(dtype=seg_f.dtype)
@@ -1538,32 +1842,44 @@ def decode_and_postprocess_cinema_stream(sampled_video_latent: dict, video_vae, 
             vid_dur_sec = float(frames.shape[0]) / max(1.0, float(final_fps))
             suno_cfg = sampled_video_latent.get('suno_music_studio') if isinstance(sampled_video_latent, dict) and isinstance(sampled_video_latent.get('suno_music_studio'), dict) else {}
             suno_direct = sampled_video_latent.get('suno_direct_audio') if isinstance(sampled_video_latent, dict) and isinstance(sampled_video_latent.get('suno_direct_audio'), dict) else None
+            if (not isinstance(suno_direct, dict) or not isinstance(suno_direct.get('waveform'), torch.Tensor)) and isinstance(suno_cfg.get('waveform_32k'), torch.Tensor):
+                suno_direct = {'waveform': suno_cfg['waveform_32k'], 'sample_rate': 32000}
             suno_src_str = str(suno_cfg.get('source_audio_path') or suno_cfg.get('master_wav_path') or '') if suno_cfg.get('active') else ''
             suno_wav = Path(suno_src_str) if suno_src_str else None
             suno_master_wav = Path(str(suno_cfg.get('master_wav_path', ''))) if suno_cfg.get('active') and suno_cfg.get('master_wav_path') else None
             if (suno_wav is None or not suno_wav.exists()) and suno_master_wav is not None and suno_master_wav.exists():
                 suno_wav = suno_master_wav
-            if str(audio_codec).lower() != 'mute' and suno_wav is not None and suno_wav.exists() and suno_wav.stat().st_size > 1024:
+            has_wav = False
+            is_muted = str(audio_codec).lower() == 'mute'
+            if (not is_muted) and suno_wav is not None and suno_wav.exists() and suno_wav.stat().st_size > 1024:
                 ffmpeg_bin = _resolve_ffmpeg_binary()
                 start_off_s = float(suno_cfg.get('start_offset_sec', 0.0) or 0.0) if suno_wav != suno_master_wav else 0.0
                 fade_start = max(0.0, vid_dur_sec - 1.2)
                 if ffmpeg_bin:
                     try:
-                        trim_cmd = [ffmpeg_bin, '-y', '-ss', f'{max(0.0, start_off_s):.3f}', '-i', str(suno_wav), '-t', f'{vid_dur_sec:.3f}', '-af', f'aresample=async=1:first_pts=0,afade=t=out:st={fade_start:.2f}:d=1.2', '-ac', '2', '-ar', '48000', '-c:a', 'pcm_s16le', str(temp_wav)]
+                        trim_cmd = [ffmpeg_bin, '-y', '-ss', f'{max(0.0, start_off_s):.3f}', '-i', str(suno_wav), '-t', f'{vid_dur_sec:.3f}', '-vn', '-af', f'aresample=async=1:first_pts=0,afade=t=out:st={fade_start:.2f}:d=1.2', '-ac', '2', '-ar', '48000', '-c:a', 'pcm_s16le', str(temp_wav)]
                         subprocess.run(trim_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
                     except Exception:
                         pass
-                if not temp_wav.exists() or temp_wav.stat().st_size < 1024:
-                    shutil.copy2(str(suno_master_wav if (suno_master_wav and suno_master_wav.exists()) else suno_wav), str(temp_wav))
-                has_wav = True
-                print(f"[EZ-VAULT] 🎵 Muxar 48kHz Studio Master Suno-ljudspår ({suno_cfg.get('bpm', 124.0)} BPM, {vid_dur_sec:.2f}s) i exakt A/V-synk till slutvideon!")
-            elif str(audio_codec).lower() != 'mute' and isinstance(suno_direct, dict) and isinstance(suno_direct.get('waveform'), torch.Tensor):
+                if not _wav_has_audible_signal(temp_wav):
+                    _prepare_external_audio_wav_pyav(suno_wav, temp_wav, start_off_s, vid_dur_sec, fade_out_sec=1.2, target_sr=48000)
+                if not _wav_has_audible_signal(temp_wav) and suno_master_wav is not None and suno_master_wav.exists() and (suno_master_wav != suno_wav):
+                    _prepare_external_audio_wav_pyav(suno_master_wav, temp_wav, 0.0, vid_dur_sec, fade_out_sec=1.2, target_sr=48000)
+                if _wav_has_audible_signal(temp_wav):
+                    has_wav = True
+                    print(f"[EZ-VAULT] 🎵 Muxar 48kHz Studio Master Suno-ljudspår ({suno_cfg.get('bpm', 124.0)} BPM, {vid_dur_sec:.2f}s) i exakt A/V-synk till slutvideon!")
+            if (not is_muted) and (not has_wav) and isinstance(suno_direct, dict) and isinstance(suno_direct.get('waveform'), torch.Tensor):
                 w_np = _normalize_single_audio_tensor_to_np(suno_direct['waveform'])
                 sr_d = int(suno_direct.get('sample_rate', 32000) or 32000)
                 if w_np is not None and w_np.size > 0:
                     tgt_s = int(round(vid_dur_sec * float(sr_d)))
                     if w_np.shape[0] > tgt_s and tgt_s > 32:
                         w_np = w_np[:tgt_s]
+                    fade_n = min(int(round(1.2 * float(sr_d))), w_np.shape[0] // 3)
+                    if fade_n >= 64:
+                        f_curve = (0.5 * (1.0 + np.cos(np.linspace(0.0, np.pi, fade_n, dtype=np.float32))))[:, None] if w_np.ndim == 2 else (0.5 * (1.0 + np.cos(np.linspace(0.0, np.pi, fade_n, dtype=np.float32))))
+                        w_np = w_np.copy()
+                        w_np[-fade_n:] = w_np[-fade_n:] * f_curve
                     pcm16 = np.clip(w_np * 32767.0, -32768, 32767).astype(np.int16)
                     ch_d = int(pcm16.shape[1]) if pcm16.ndim == 2 else 1
                     with wave.open(str(temp_wav), 'wb') as wf:
@@ -1571,11 +1887,20 @@ def decode_and_postprocess_cinema_stream(sampled_video_latent: dict, video_vae, 
                         wf.setsampwidth(2)
                         wf.setframerate(sr_d)
                         wf.writeframes(pcm16.tobytes())
-                has_wav = temp_wav.exists() and temp_wav.stat().st_size > 1024
-            else:
+                has_wav = _wav_has_audible_signal(temp_wav)
+            if (not is_muted) and (not has_wav):
                 vault_aud_mode = str(sampled_video_latent.get('audio_soundtrack_mode', '') if isinstance(sampled_video_latent, dict) else '').strip() or 'sfx_only'
-                has_wav = _decode_audio_latent_to_wav(audio_vae, audio_latent, temp_wav, audio_win_latents=audio_win_latents, overlap_t=overlap_t, audio_soundtrack_mode=vault_aud_mode, target_duration_sec=vid_dur_sec, native_fps=float(frame_rate)) if str(audio_codec).lower() != 'mute' else False
+                if vault_aud_mode == 'sfx_only' and isinstance(sampled_video_latent, dict) and bool(sampled_video_latent.get('is_vocal_scene', False)):
+                    vault_aud_mode = 'sfx_and_speech'
+                has_wav = _decode_audio_latent_to_wav(audio_vae, audio_latent, temp_wav, audio_win_latents=audio_win_latents, overlap_t=overlap_t, audio_soundtrack_mode=vault_aud_mode, target_duration_sec=vid_dur_sec, native_fps=float(frame_rate))
+                if has_wav:
+                    print(f'[EZ-VAULT] 🔊 Avkodade inbyggt MiniMax H3 Joint AV-ljudspår ({vault_aud_mode}, {vid_dur_sec:.2f}s) för muxning.')
             _encode_video_with_ffmpeg(frames_bhwc=frames, fps=final_fps, output_path=Path(saved_manifest_path), codec=codec, container=container, bit_depth=bit_depth, quality=quality, audio_wav_path=temp_wav if has_wav else None, audio_codec=audio_codec, audio_bitrate=audio_bitrate, crop_to_audio=crop_to_audio, save_metadata=save_metadata, metadata_payload=full_vault_meta)
+            if has_wav and (not is_muted):
+                if _verify_media_has_audio_stream(Path(saved_manifest_path)):
+                    print(f'[EZ-VAULT-MUX] ✅ Verifierad ljudström muxad i slutfilen: {Path(saved_manifest_path).name}')
+                else:
+                    print(f'[EZ-VAULT-MUX] ⚠️ VARNING: Slutfilen saknar verifierad ljudström trots aktivt WAV-spår: {Path(saved_manifest_path).name}')
             if temp_wav.exists():
                 try:
                     temp_wav.unlink()

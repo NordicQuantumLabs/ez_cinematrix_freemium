@@ -68,10 +68,10 @@ def _classify_image_unet_architecture(unet_name: str, clip_type_str: str = 'krea
     u_path_low = str(unet_name or '').replace('\\', '/').lower()
     u_low = os.path.basename(u_path_low)
     ct_low = str(clip_type_str or 'krea2').strip().lower()
-    is_explicit_dit = any((dk in u_low for dk in ('krea', 'flux', 'qwen')))
-    pony_tokens = ('pony', 'pdxl', 'autismmix', 'cyberrealistic_pony')
-    ilxl_tokens = ('illustrious', 'ilxl', 'noobai', 'noob', 'wai-nsfw', 'wai_nsfw', 'wai-ani', 'hassaku', 'novaanime', 'nova_anime', 'miaomiao', 'amanatsu', 'cyberillustrious', 'prefect', 'obsessed')
-    sdxl_tokens = ('sdxl', 'juggernaut', 'realvis', 'lustify', 'bigasp')
+    is_explicit_dit = any((dk in u_low for dk in ('krea', 'flux', 'qwen', 'chroma', 'schnell')))
+    pony_tokens = ('pony', 'pdxl', 'autismmix', 'cyberrealistic_pony', 'cyberrealisticpony', 'ponyxl', 'pony_v6', 'pony-v6', 'prefect_pony', 'everclear_pony')
+    ilxl_tokens = ('illustrious', 'ilxl', 'il-noob', 'il_noob', 'noobai', 'noob', 'wainsfw', 'wai-nsfw', 'wai_nsfw', 'wai-illustrious', 'wai_illustrious', 'wai-ani', 'inanime', 'arblend', 'hassaku', 'novaanime', 'nova_anime', 'miaomiao', 'amanatsu', 'cyberillustrious', 'prefect', 'obsessed')
+    sdxl_tokens = ('sdxl', 'juggernaut', 'realvis', 'lustify', 'bigasp', 'dreamshaperxl', 'albedobase', 'zavychromaxl', 'copaxtimeless', 'epicrealismxl')
     is_pony = (not is_explicit_dit) and (ct_low == 'pony' or any((pk in u_path_low for pk in pony_tokens)))
     is_illustrious = (not is_explicit_dit) and (not is_pony) and (ct_low == 'illustrious' or any((ik in u_path_low for ik in ilxl_tokens)))
     is_sdxl_base = (not is_explicit_dit) and (not is_pony and not is_illustrious) and (ct_low in ('sdxl', 'stable_diffusion') or any((sk in u_path_low for sk in sdxl_tokens)))
@@ -92,6 +92,86 @@ def _classify_image_unet_architecture(unet_name: str, clip_type_str: str = 'krea
             pass
     is_sdxl_any = bool(is_pony or is_illustrious or is_sdxl_base)
     return (is_pony, is_illustrious, is_sdxl_base, is_sdxl_any)
+
+
+def _resolve_canonical_image_arch_tag(unet_name: str, clip_type_str: str = 'krea2', unet_path: str = '') -> str:
+    u_path_low = str(unet_name or '').replace('\\', '/').lower()
+    u_low = os.path.basename(u_path_low)
+    ct_low = str(clip_type_str or 'krea2').strip().lower()
+    is_krea_name = any((kk in u_path_low for kk in ('krea', 'musebystableyogi', 'snofssexnudes')))
+    is_qwen_name = (not is_krea_name) and any((qk in u_path_low for qk in ('qwen_image', 'qwen-image', 'qwenimage')))
+    is_flux_name = (not is_krea_name) and (not is_qwen_name) and any((fk in u_path_low for fk in ('flux1', 'flux.1', 'flux-dev', 'flux_dev', 'flux-schnell', 'flux_schnell', 'schnell', 'chroma', 'shuttle', 'pixelwave_flux', 'acorn_is_spinning', 'flux')))
+    if is_krea_name:
+        return 'krea2'
+    if is_qwen_name:
+        return 'qwen_image'
+    if is_flux_name:
+        return 'flux'
+    (is_pony, is_illustrious, is_sdxl_base, is_sdxl_any) = _classify_image_unet_architecture(unet_name, clip_type_str, unet_path=unet_path)
+    if is_illustrious:
+        return 'illustrious'
+    if is_pony:
+        return 'pony'
+    if is_sdxl_base or is_sdxl_any:
+        return 'sdxl'
+    if u_low and u_low != 'none':
+        try:
+            from .engine_ez_05_cinematrix_video_lora_stack import _inspect_safetensors_header, _resolve_candidate_model_path
+            full_p = unet_path or (folder_paths.get_full_path('diffusion_models', unet_name) if hasattr(folder_paths, 'get_full_path') else None) or (folder_paths.get_full_path('checkpoints', unet_name) if hasattr(folder_paths, 'get_full_path') else None) or _resolve_candidate_model_path(unet_name)
+            if full_p and os.path.exists(full_p):
+                hdr = _inspect_safetensors_header(full_p)
+                hdr_arch = str(hdr.get('arch', '') or '').lower()
+                if hdr_arch in ('flux', 'chroma'):
+                    return 'flux'
+                if hdr_arch == 'qwen_image':
+                    return 'qwen_image'
+        except Exception:
+            pass
+    if ct_low == 'flux':
+        return 'flux'
+    if ct_low == 'qwen_image':
+        return 'qwen_image'
+    return 'krea2'
+
+
+def _resolve_flux_dual_clip_paths(clip_name: str) -> list:
+    all_clips = [c for c in list_dynamic_clip_encoders() if c and c != 'None']
+    t5_cands = sorted(
+        [c for c in all_clips if any((tk in c.lower() for tk in ('t5xxl', 'umt5'))) and '32b' not in c.lower()],
+        key=lambda x: (0 if 'fp8_e4m3fn_scaled' in x.lower() else (1 if 'fp8' in x.lower() else 2), len(x)),
+    )
+    clip_l_cands = sorted(
+        [c for c in all_clips if ('clip_l' in c.lower() or 'vit-l' in c.lower()) and 't5' not in c.lower()],
+        key=lambda x: (0 if os.path.basename(x).lower() == 'clip_l.safetensors' else 1, len(x)),
+    )
+    chosen_rel = []
+    c_low = str(clip_name or '').lower()
+    if clip_name and clip_name != 'None' and not any((bad in c_low for bad in ('qwen', 'krea', '32b', 'minimax', 'sdxl', 'pony', 'illustrious'))):
+        if 't5' in c_low:
+            if clip_l_cands:
+                chosen_rel.append(clip_l_cands[0])
+            chosen_rel.append(clip_name)
+        elif 'clip_l' in c_low or 'vit-l' in c_low:
+            chosen_rel.append(clip_name)
+            if t5_cands:
+                chosen_rel.append(t5_cands[0])
+        else:
+            chosen_rel.append(clip_name)
+    if not chosen_rel:
+        if clip_l_cands and t5_cands:
+            chosen_rel = [clip_l_cands[0], t5_cands[0]]
+        elif t5_cands:
+            chosen_rel = [t5_cands[0]]
+        elif clip_l_cands:
+            chosen_rel = [clip_l_cands[0]]
+        elif clip_name and clip_name != 'None':
+            chosen_rel = [clip_name]
+    resolved_paths = []
+    for rel_c in chosen_rel:
+        cp = folder_paths.get_full_path('text_encoders', rel_c) or folder_paths.get_full_path('clip', rel_c)
+        if cp and cp not in resolved_paths:
+            resolved_paths.append(cp)
+    return resolved_paths
 
 
 def _is_lora_sd_compatible_with_arch(lora_sd: dict, is_sdxl_family: bool) -> bool:
@@ -172,12 +252,12 @@ def apply_krea2_dynamic_shift_patch(model, sampling_mode: str, width: int, heigh
         shift_val = float(manual_shift)
     if arch_fam == 'sd3_flow' and hasattr(comfy.model_sampling, 'ModelSamplingSD3'):
         class ModelSamplingUniversalFlow(comfy.model_sampling.ModelSamplingSD3, comfy.model_sampling.CONST):
-            pass
+            _ez_flow_shift = True
         ms_obj = ModelSamplingUniversalFlow(model.model.model_config)
         ms_obj.set_parameters(shift=max(1.0, shift_val))
     else:
         class ModelSamplingKrea2(comfy.model_sampling.ModelSamplingFlux, comfy.model_sampling.CONST):
-            pass
+            _ez_krea2_shift = True
         ms_obj = ModelSamplingKrea2(model.model.model_config)
         ms_obj.set_parameters(shift=shift_val)
     cloned = model.clone()
@@ -416,7 +496,6 @@ def _dequantize_rowwise_module_fallback(module, _load_from_state_dict, state_dic
             error_msgs.remove(err_item)
 
 def _ensure_int8_convrot_quant_compat(tier_profile: dict=None):
-    import struct
     prof = dict(tier_profile) if isinstance(tier_profile, dict) else {}
     try:
         cur_lqm = getattr(comfy.ops, '_load_quantized_module', None)
@@ -709,15 +788,21 @@ def load_and_split_image_models_with_loras(unet_name: str, clip_name: str, clip_
         if krea_first:
             print(f'[EZ-03-SELF-HEAL] 🛡️ Ogiltig Bild-UNet "{unet_name}" (t.ex. Qwen3-VL/CLIP) -> Väljer automatiskt Krea 2 UNet: {krea_first[0]}')
             unet_name = krea_first[0]
-    unet_path = folder_paths.get_full_path('diffusion_models', unet_name) or folder_paths.get_full_path('unet', unet_name) or folder_paths.get_full_path('checkpoints', unet_name)
+    ckpt_only_path = folder_paths.get_full_path('checkpoints', unet_name)
+    unet_path = folder_paths.get_full_path('diffusion_models', unet_name) or folder_paths.get_full_path('unet', unet_name) or ckpt_only_path
     unet_low = str(unet_name or '').lower()
-    ct_low = str(clip_type_str or 'krea2').strip().lower()
-    (is_pony_arch, is_illustrious_arch, _is_sdxl_base_arch, is_sdxl_family) = _classify_image_unet_architecture(unet_name, clip_type_str)
+    resolved_arch_tag = _resolve_canonical_image_arch_tag(unet_name, clip_type_str, unet_path=str(unet_path or ''))
+    (is_pony_arch, is_illustrious_arch, _is_sdxl_base_arch, is_sdxl_family) = _classify_image_unet_architecture(unet_name, clip_type_str, unet_path=str(unet_path or ''))
+    if resolved_arch_tag in ('illustrious', 'pony', 'sdxl'):
+        is_sdxl_family = True
+    is_flux_arch = (resolved_arch_tag == 'flux')
+    is_flux_schnell = bool(is_flux_arch and 'schnell' in unet_low)
+    ct_low = resolved_arch_tag if resolved_arch_tag in ('krea2', 'flux', 'qwen_image', 'illustrious', 'pony', 'sdxl') else str(clip_type_str or 'krea2').strip().lower()
     is_baked_krea_turbo = (not is_sdxl_family) and _is_baked_krea2_turbo_unet(unet_name)
     base_model = None
     embedded_clip = None
     embedded_vae = None
-    if is_sdxl_family:
+    if is_sdxl_family or (is_flux_arch and ckpt_only_path and str(unet_path) == str(ckpt_only_path)):
         try:
             ckpt_out = comfy.sd.load_checkpoint_guess_config(unet_path, output_vae=True, output_clip=True, embedding_directory=folder_paths.get_folder_paths('embeddings'))
             if isinstance(ckpt_out, (tuple, list)) and len(ckpt_out) >= 3 and (ckpt_out[0] is not None):
@@ -725,25 +810,34 @@ def load_and_split_image_models_with_loras(unet_name: str, clip_name: str, clip_
         except Exception:
             base_model = None
     if base_model is None:
-        if 'krea' in unet_low or ct_low == 'krea2':
+        if resolved_arch_tag == 'krea2':
             print(f"[EZ-KREA2-03] 🧬 Active Architecture: KREA 2 (UNet: {os.path.basename(str(unet_name))} | TE: {os.path.basename(str(clip_name))} [Krea2TEModel_] | VAE: {os.path.basename(str(vae_name))}) — Note: ComfyUI logs 'model_type FLUX' internally because Krea 2 shares the 19/38 MMDiT block structure.")
+        elif is_flux_arch:
+            print(f"[EZ-03-FLUX-AUTO] 🧬 Active Architecture: FLUX.1 ({'Schnell 4-Step' if is_flux_schnell else 'Dev/Chroma'} | UNet: {os.path.basename(str(unet_name))})")
         base_model = _load_diffusion_model_convrot_safe(unet_path, tier_profile=tier_profile)
     clip_low = str(clip_name or '').lower()
-    if ('32b' in clip_low or 'minimax_h3' in clip_low or not clip_name or clip_name == 'None') and ct_low in ('krea2', 'qwen_image'):
+    if ct_low in ('krea2', 'qwen_image') and (not clip_name or clip_name == 'None' or any((bk in clip_low for bk in ('32b', 'minimax_h3', 't5xxl', 'umt5', 'clip_l', 'clip_g', 'sdxl', 'pony', 'illustrious')))):
         all_img_clips = [c for c in list_dynamic_clip_encoders() if c and c != 'None']
         krea_4b_clips = [c for c in all_img_clips if any((k in c.lower() for k in ('4b', 'krea2', 'abliteratedcomfyui', 'qwen3vl_4b'))) and '32b' not in c.lower()]
         if krea_4b_clips:
-            print(f'[EZ-03-SELF-HEAL] 🛡️ Byter felkopplad 32B Video-CLIP "{clip_name}" -> Krea 2 4B Text Encoder: {krea_4b_clips[0]}')
+            print(f'[EZ-03-SELF-HEAL] 🛡️ Byter felkopplad CLIP "{clip_name}" -> Krea 2 4B Text Encoder: {krea_4b_clips[0]}')
             clip_name = krea_4b_clips[0]
             clip_low = str(clip_name or '').lower()
     if is_sdxl_family and embedded_clip is not None:
-        print(f'[EZ-03-PONY/ILXL] 🧬 Använder inbakad Dual CLIP-L/G direkt från checkpoint: {os.path.basename(str(unet_name))}')
+        print(f'[EZ-03-{resolved_arch_tag.upper()}] 🧬 Använder inbakad Dual CLIP-L/G direkt från checkpoint: {os.path.basename(str(unet_name))}')
         clip_target = embedded_clip
+    elif is_flux_arch and embedded_clip is not None:
+        print(f'[EZ-03-FLUX-AUTO] 🧬 Använder inbakad Dual CLIP (CLIP-L + T5) direkt från Flux-checkpoint: {os.path.basename(str(unet_name))}')
+        clip_target = embedded_clip
+    elif is_flux_arch:
+        flux_clip_paths = _resolve_flux_dual_clip_paths(clip_name)
+        print(f"[EZ-03-FLUX-AUTO] 🧬 Laddar Flux Text Encoder(s): {[os.path.basename(p) for p in flux_clip_paths]}")
+        clip_target = comfy.sd.load_clip(ckpt_paths=flux_clip_paths, embedding_directory=folder_paths.get_folder_paths('embeddings'), clip_type=getattr(comfy.sd.CLIPType, 'FLUX', comfy.sd.CLIPType.STABLE_DIFFUSION))
     else:
         clip_path = folder_paths.get_full_path('text_encoders', clip_name) or folder_paths.get_full_path('clip', clip_name)
         krea2_native_key = 'KREA2' if hasattr(comfy.sd.CLIPType, 'KREA2') else 'FLUX'
         clip_alias_map = {'KREA2': krea2_native_key, 'FLUX': 'FLUX', 'SDXL': 'STABLE_DIFFUSION', 'PONY': 'STABLE_DIFFUSION', 'ILLUSTRIOUS': 'STABLE_DIFFUSION', 'SD3': 'SD3', 'QWEN_IMAGE': 'QWEN_IMAGE', 'WAN': 'WAN', 'STABLE_DIFFUSION': 'STABLE_DIFFUSION'}
-        mapped_clip_key = clip_alias_map.get(str(clip_type_str or 'krea2').upper(), str(clip_type_str or krea2_native_key).upper())
+        mapped_clip_key = clip_alias_map.get(ct_low.upper(), ct_low.upper() or krea2_native_key)
         resolved_clip_type = getattr(comfy.sd.CLIPType, mapped_clip_key, getattr(comfy.sd.CLIPType, krea2_native_key, comfy.sd.CLIPType.STABLE_DIFFUSION))
         clip_target = comfy.sd.load_clip(ckpt_paths=[clip_path], embedding_directory=folder_paths.get_folder_paths('embeddings'), clip_type=resolved_clip_type)
     eff_clip_layer = -2 if (is_pony_arch or is_illustrious_arch) and int(stop_at_clip_layer) == -1 else int(stop_at_clip_layer)
@@ -755,18 +849,33 @@ def load_and_split_image_models_with_loras(unet_name: str, clip_name: str, clip_
     if is_sdxl_family and (not vae_name or vae_name == 'None' or any((vk in vae_low for vk in ('qwen', 'krea', 'ae.safetensors', 'ae.sft', 'flux', 'minimax', 'h3', 'video_vae', 'audio_vae', 'wan', 'hunyuan')))):
         sdxl_vaes = [v for v in list_dynamic_vaes() if v and v != 'None' and any((sk in v.lower() for sk in ('sdxl', 'pony', 'illustrious')))]
         if embedded_vae is not None:
-            print(f'[EZ-03-PONY/ILXL] 🎨 Använder inbakad 4ch SDXL/Illustrious-VAE direkt från checkpoint: {os.path.basename(str(unet_name))}')
+            print(f'[EZ-03-{resolved_arch_tag.upper()}] 🎨 Använder inbakad 4ch {resolved_arch_tag.upper()}-VAE direkt från checkpoint: {os.path.basename(str(unet_name))}')
             image_vae = embedded_vae
         elif sdxl_vaes:
-            print(f'[EZ-03-PONY/ILXL] 🛡️ Byter Krea/Flux-VAE "{vae_name}" -> Dedikerad SDXL-VAE: {sdxl_vaes[0]}')
+            print(f'[EZ-03-{resolved_arch_tag.upper()}] 🛡️ Byter 16ch Krea/Flux-VAE "{vae_name}" -> 4ch SDXL-VAE: {sdxl_vaes[0]}')
             vae_name = sdxl_vaes[0]
             vae_low = str(vae_name or '').lower()
-    elif any((vk in vae_low for vk in ('minimax', 'h3', 'video_vae', 'audio_vae', 'hunyuan_video', '_ez_hadamard_v2_fp16_vae', '_ez_fp16_vae_cache', 'sdxl', 'pony', 'illustrious'))) or not vae_name or vae_name == 'None':
+    elif is_flux_arch and (not vae_name or vae_name == 'None' or any((vk in vae_low for vk in ('qwen_image_vae', 'krea', 'minimax', 'h3', 'video_vae', 'audio_vae', 'hunyuan', 'sdxl', 'pony', 'illustrious')))):
         all_vaes = [v for v in list_dynamic_vaes() if v and v != 'None']
-        img_vaes = [v for v in all_vaes if ('qwen_image_vae' in v.lower() or os.path.basename(v).lower() in ('ae.safetensors', 'ae.sft') or 'flux_vae' in v.lower()) and not any((vk in v.lower() for vk in ('minimax', 'video_vae', 'audio_vae', 'sdxl', 'pony', 'illustrious')))]
-        if img_vaes:
-            print(f'[EZ-03-SELF-HEAL] 🛡️ Byter felkopplad 4ch/Video-VAE "{vae_name}" -> 16ch Krea2/Flux Image-VAE: {img_vaes[0]}')
-            vae_name = img_vaes[0]
+        flux_vaes = sorted(
+            [v for v in all_vaes if (os.path.basename(v).lower() in ('ae.safetensors', 'ae.sft') or 'flux_vae' in v.lower() or 'flux' in v.lower()) and not any((vk in v.lower() for vk in ('minimax', 'video_vae', 'audio_vae', 'sdxl', 'pony', 'illustrious')))],
+            key=lambda x: (0 if os.path.basename(x).lower() in ('ae.safetensors', 'ae.sft') else 1, len(x)),
+        )
+        if embedded_vae is not None:
+            print(f'[EZ-03-FLUX-AUTO] 🎨 Använder inbakad 16ch Flux-VAE direkt från checkpoint: {os.path.basename(str(unet_name))}')
+            image_vae = embedded_vae
+        elif flux_vaes:
+            print(f'[EZ-03-FLUX-AUTO] 🛡️ Byter "{vae_name}" -> 16ch Flux VAE: {flux_vaes[0]}')
+            vae_name = flux_vaes[0]
+            vae_low = str(vae_name or '').lower()
+    elif any((vk in vae_low for vk in ('minimax', 'h3', 'video_vae', 'audio_vae', 'hunyuan_video', '_ez_hadamard_v2_fp16_vae', '_ez_fp16_vae_cache', 'sdxl', 'pony', 'illustrious'))) or (resolved_arch_tag == 'krea2' and ('flux_vae' in vae_low or os.path.basename(vae_low) in ('ae.safetensors', 'ae.sft'))) or not vae_name or vae_name == 'None':
+        all_vaes = [v for v in list_dynamic_vaes() if v and v != 'None']
+        krea_qwen_vaes = [v for v in all_vaes if ('qwen_image_vae' in v.lower() or 'krea' in v.lower()) and not any((vk in v.lower() for vk in ('minimax', 'video_vae', 'audio_vae', 'sdxl', 'pony', 'illustrious')))]
+        fallback_16ch = [v for v in all_vaes if (os.path.basename(v).lower() in ('ae.safetensors', 'ae.sft') or 'flux_vae' in v.lower()) and not any((vk in v.lower() for vk in ('minimax', 'video_vae', 'audio_vae', 'sdxl', 'pony', 'illustrious')))]
+        chosen_krea_vaes = krea_qwen_vaes or fallback_16ch
+        if chosen_krea_vaes and vae_name != chosen_krea_vaes[0]:
+            print(f'[EZ-03-SELF-HEAL] 🛡️ Byter felkopplad VAE "{vae_name}" -> 16ch Krea2/Qwen Image-VAE: {chosen_krea_vaes[0]}')
+            vae_name = chosen_krea_vaes[0]
     if image_vae is None:
         vae_path = folder_paths.get_full_path('vae', vae_name)
         loaded_vae = comfy.utils.load_torch_file(vae_path, return_metadata=True)
@@ -777,8 +886,10 @@ def load_and_split_image_models_with_loras(unet_name: str, clip_name: str, clip_
             image_vae = comfy.sd.VAE(sd=vae_sd)
     patched_model = base_model
     patched_clip = clip_target
-    sdxl_lora_tokens = ('pony', 'pdxl', 'illustrious', 'ilxl', 'il-noob', 'il_noob', 'lora-ilxl', 'noobai', 'sdxl', 'dmd2', 'sdxl_lightning', 'wai_nsfw', 'flatline', 'bring_back_flat', 'anime_screencap')
+    sdxl_lora_tokens = ('pony', 'pdxl', 'illustrious', 'ilxl', 'il-noob', 'il_noob', 'lora-ilxl', 'noobai', 'sdxl', 'dmd2', 'sdxl_lightning', 'wai_nsfw', 'wainsfw', 'flatline', 'bring_back_flat', 'anime_screencap')
     dit_lora_tokens = ('krea', 'qwen', 'flux', 'snofs')
+    krea_only_tokens = ('krea', 'snofs', 'raw_to_turbo', 'qwen_image', 'qwen-image')
+    flux_turbo_only_tokens = ('flux_turbo', 'flux-turbo', 'flux.1-turbo', 'hyper-flux', 'hyper_flux')
     lora_ram_cache = globals().setdefault('_EZ_LORA_SD_RAM_CACHE', {})
     applied_style_count = 0
     for lora_entry in style_loras:
@@ -790,10 +901,13 @@ def load_and_split_image_models_with_loras(unet_name: str, clip_name: str, clip_
         if lora_file and lora_file != 'None' and (abs(m_str) > 1e-05 or abs(c_str) > 1e-05):
             l_low = str(lora_file).lower()
             if is_sdxl_family and any((kk in l_low for kk in dit_lora_tokens)):
-                print(f'[EZ-03-PONY/ILXL] 🛡️ Ignorerar Krea2/Flux-LoRA "{lora_file}" vid körning av SDXL/Pony/Illustrious.')
+                print(f'[EZ-03-{resolved_arch_tag.upper()}] 🛡️ Ignorerar Krea2/Flux-LoRA "{lora_file}" vid körning av {resolved_arch_tag.upper()}.')
                 continue
             if not is_sdxl_family and any((sk in l_low for sk in sdxl_lora_tokens)):
-                print(f'[EZ-03-KREA/FLUX] 🛡️ Ignorerar SDXL/Pony/Illustrious-LoRA "{lora_file}" vid körning av Krea2/Flux/Qwen-Image.')
+                print(f'[EZ-03-{resolved_arch_tag.upper()}] 🛡️ Ignorerar SDXL/Pony/Illustrious-LoRA "{lora_file}" vid körning av {resolved_arch_tag.upper()}.')
+                continue
+            if is_flux_arch and any((kt in l_low for kt in krea_only_tokens)):
+                print(f'[EZ-03-FLUX-AUTO] 🛡️ Ignorerar Krea2/Qwen-specifik LoRA "{lora_file}" vid körning av Flux.1.')
                 continue
             l_path = folder_paths.get_full_path('loras', lora_file)
             if l_path:
@@ -831,7 +945,11 @@ def load_and_split_image_models_with_loras(unet_name: str, clip_name: str, clip_
     stage2_model = patched_model.clone()
     t_low = str(turbo_lora_name or '').lower()
     sdxl_dmd2_active = False
-    has_valid_turbo = bool((not is_baked_krea_turbo) and turbo_lora_name and turbo_lora_name != 'None' and (abs(float(turbo_strength)) > 1e-05) and (not (is_sdxl_family and any((kk in t_low for kk in dit_lora_tokens)))) and (not (not is_sdxl_family and any((sk in t_low for sk in sdxl_lora_tokens)))))
+    flux_turbo_lora_active = False
+    cross_dit_turbo_mismatch = bool((is_flux_arch and any((kt in t_low for kt in krea_only_tokens))) or (resolved_arch_tag == 'krea2' and any((ft in t_low for ft in flux_turbo_only_tokens))))
+    if cross_dit_turbo_mismatch and turbo_lora_name and turbo_lora_name != 'None' and (abs(float(turbo_strength)) > 1e-05):
+        print(f'[EZ-03-ARCH-SHIELD] 🛡️ Ignorerar arkitektur-inkompatibel Turbo-LoRA "{turbo_lora_name}" vid körning av {resolved_arch_tag.upper()}.')
+    has_valid_turbo = bool((not is_baked_krea_turbo) and (not cross_dit_turbo_mismatch) and turbo_lora_name and turbo_lora_name != 'None' and (abs(float(turbo_strength)) > 1e-05) and (not (is_sdxl_family and any((kk in t_low for kk in dit_lora_tokens)))) and (not (not is_sdxl_family and any((sk in t_low for sk in sdxl_lora_tokens)))))
     if has_valid_turbo:
         t_path = folder_paths.get_full_path('loras', turbo_lora_name)
         if t_path:
@@ -845,6 +963,9 @@ def load_and_split_image_models_with_loras(unet_name: str, clip_name: str, clip_
                 if is_sdxl_family:
                     (stage1_model, _) = comfy.sd.load_lora_for_models(stage1_model, None, turbo_sd, float(turbo_strength), 0.0)
                     sdxl_dmd2_active = True
+                elif is_flux_arch:
+                    (stage1_model, _) = comfy.sd.load_lora_for_models(stage1_model, None, turbo_sd, float(turbo_strength), 0.0)
+                    flux_turbo_lora_active = True
             else:
                 print(f'[EZ-03-ARCH-SHIELD] 🛡️ Hoppar över inkompatibel Turbo-LoRA "{turbo_lora_name}" (SDXL={is_sdxl_family}).')
                 has_valid_turbo = False
@@ -855,7 +976,6 @@ def load_and_split_image_models_with_loras(unet_name: str, clip_name: str, clip_
             stage2_model = apply_krea2_dynamic_shift_patch(stage2_model, eff_sampling_mode, width, height, 1.15)
     else:
         stage2_model = apply_krea2_dynamic_shift_patch(stage2_model, eff_sampling_mode, width, height, 1.15)
-    resolved_arch_tag = 'illustrious' if is_illustrious_arch else ('pony' if is_pony_arch else ('sdxl' if is_sdxl_family else 'krea2'))
     setattr(stage1_model, '_ez_base_model', base_model)
     setattr(stage1_model, '_ez_base_clip', clip_target)
     setattr(stage1_model, '_ez_baked_in_turbo', bool(is_baked_krea_turbo))
@@ -864,6 +984,10 @@ def load_and_split_image_models_with_loras(unet_name: str, clip_name: str, clip_
     setattr(stage2_model, '_ez_image_arch', resolved_arch_tag)
     setattr(stage1_model, '_ez_sdxl_dmd2_active', bool(sdxl_dmd2_active))
     setattr(stage2_model, '_ez_sdxl_dmd2_active', bool(sdxl_dmd2_active))
+    setattr(stage1_model, '_ez_flux_schnell_active', bool(is_flux_schnell))
+    setattr(stage2_model, '_ez_flux_schnell_active', bool(is_flux_schnell))
+    setattr(stage1_model, '_ez_flux_turbo_lora_active', bool(flux_turbo_lora_active))
+    setattr(stage2_model, '_ez_flux_turbo_lora_active', bool(flux_turbo_lora_active))
     setattr(stage1_model, '_ez_turbo_spec', (turbo_lora_name if has_valid_turbo else 'None', float(turbo_strength) if has_valid_turbo else 0.0, eff_sampling_mode, int(width), int(height), bool(is_sdxl_family)))
     setattr(patched_clip, '_ez_cond_cache', _IMAGE_CLIP_COND_CACHE)
     pos_clean = str(positive_text or '').strip()

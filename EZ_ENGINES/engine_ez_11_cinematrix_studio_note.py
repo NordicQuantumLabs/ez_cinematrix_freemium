@@ -7,6 +7,8 @@
 ===============================================================================
 """
 
+from pathlib import Path
+import re
 from typing import Dict, Any, Tuple
 from .engine_ez_locales import load_project_locales_payload
 
@@ -19,7 +21,9 @@ NOTE_TOPIC_PRESETS = [
     "5. Dynamic VLM Token Scaling (360s/72 Shots), 3D Latent Hysteresis & 3-Axis Director",
     "6. EZ [13] Omni-Reference 5-Slot Studio (Slots [1]–[4] Character + Slot [5] Video Scene) & Switchboard [14]",
     "7. Basics — Beginner's Guide (ComfyUI, Models, LoRA/DoRA, PRISM Foundry & Resources)",
-    "8. Custom Studio Notes Only (Custom Markdown)",
+    "8. PRISM Merge Recipes (01–09), 7 EZ [05] LoRA Combos & Local-Priority Shield ([03]/[05]/[10])",
+    "9. Custom Studio Notes Only (Custom Markdown)",
+    "10. Version & Patch Changelog ([Major].[Minor].[Hotfix]-[Environment])",
 ]
 
 NOTE_LOCALE_CHOICES = [
@@ -49,7 +53,9 @@ STUDIO_GUIDE_CHAPTERS: Dict[str, Dict[str, str]] = {
             "  * **In i `[13]`**: Koppla `cinematrix_bus` från **`[12] Suno`** (eller `[11]` / `[10]`) in i `cinematrix_bus` på **`[13]`**.\n"
             "  * **Ut ur `[13]` (till `[01] Canvas Ingest`)**: Koppla `cinematrix_bus ➔ [01] cinematrix_bus`, samt `master_composite_image ➔ optional_image`, `person_reactor_image ➔ ref_image_2_person`, `clothing_ootd_image ➔ ref_image_3_clothing` och `background_depth_image ➔ ref_image_4_background`.\n"
             "* **Master Duration-Synk (`[12]` / `[02]` ➔ `[06]`)**: `master_duration` i **`EZ [02]`** styr automatiskt **`EZ [06]`** via `cinematrix_bus`, och synkar med **`EZ [12] Suno Studio`** enligt valt `duration_sync_mode`.\n"
-            "* **Videospelare i `[08]` vs Live-MiniPyAV i `[07]`**: **`EZ [07]`** visar **endast MiniPyAV Live-Sampler-frames** under generering. **`EZ [08] Cinema Vault`** äger den färdiga **`🎬 SLUTPRODUKT // MASTER VIDEO PLAYER`**."
+            "* **🛡️ Local-First LoRA-Skydd & Live Header-Status (`EZ [03]`, `EZ [05]` & `EZ [10]`, `remote_hub_mode = local_priority`)**:\n"
+            "  * Dina lokala modell- och LoRA-val i **`EZ [03]`** och **`EZ [05]`** vinner nu **alltid per slot** som standard (`🛡️ LOKALA VAL VINNER`). Kvarlämnade LoRAs i **`EZ [10]`** (`⚡ HUB SÄNDER` / `💤 HUB PASSIV`) kan aldrig längre skriva över aktiva slots i smyg via bussen; de fyller endast i `None`-platser om du inte själv slår om `remote_hub_mode` till `hub_override` (`⚠️ [10] OVERRIDE AKTIV`).\n"
+            "* **Videospelare i `[08]` vs Live-MiniPyAV i `[07]`**: **`EZ [07]`** visar **endast MiniPyAV Live-Sampler-frames** under generering. **`EZ [08] Cinema Vault`** äger den färdiga **`🎬 SLUTPRODUKT // MASTER VIDEO PLAYER`** (nu med `-f ffmetadata` långprompt-skydd & förregistrerad PyAV AAC-ljudström)."
         ),
         "suno": (
             "### 🎵 2. `EZ [12]` SUNO MUSIC VIDEO, TALIGENKÄNNING (`WHISPER ASR`), AUTO-PROMPT & LÄNGD-SYNK\n"
@@ -90,9 +96,9 @@ STUDIO_GUIDE_CHAPTERS: Dict[str, Dict[str, str]] = {
             "    * Välj **`krea-2-raw-int8-convrot.safetensors`** i `EZ [03]` (`EZ [03]` kopplar automatiskt ur fotorealistiska `krea2_raw_to_turbo` vid `anime`/`cartoonish` och mutar positiva 3D/realism-LoRAs!).\n"
             "    * **Negativ Anti-3D Slider (Valfri Boost)**: Sätt `real_3d_krea2_loraholic` eller `snofs_photoSlider` på **`-0.35`** i `style_lora_2` — negativa vikter (`< 0`) bevaras 100 % och drar aktivt bort 3D-skuggning!\n"
             "    * I **`EZ [04]`**: Sätt `i2i_denoise = 0.78 – 0.85` och `enable_frequency_polish = false`. 3D-referensbilder plattas nu automatiskt till diskreta 2-tons cel-ytor + mörka 2D-bläcklinjer innan VAE-encode.\n"
-            "    * **2) Plug-and-Play Illustrious XL / Pony / SDXL + DMD2 i `EZ [03]` & `EZ [04]` (`EZ-04-ILLUSTRIOUS-AUTO`)**:\n"
-            "      * Välj valfri **Illustrious XL**-checkpoint (t.ex. i `checkpoints/Illustrious/`) direkt i `unet_name` i **`EZ [03]`**! Motorn auto-detekterar arkitekturen via sökväg och `.safetensors`-header (`input_blocks.`), laddar modellens **inbyggda Dual CLIP-L/G (`CLIP Skip -2`) + 4-kanals SDXL-VAE**, filtrerar bort kvarlämnade Krea 2-LoRAs och lägger till `anime screencap, cel shading, flat color`.\n"
-            "      * **Automatisk Sampler-Harmonisering i `EZ [04]`**: Du behöver inte ens ändra Krea 2-reglagen manuellt — `EZ [04]` omvandlar automatiskt Krea 2-standard (`52 steg, CFG 3.0, beta, Stage2 CFG 1.0`) till optimal Single-Stage Illustrious (**`28 steg, CFG 5.5, euler_ancestral + karras`**) eller ultrasnabb DMD2 (**`8 steg, CFG 1.20`** om `dmd2_sdxl_4step_lora` är aktiv!). Bästa platta Illustrious-LoRAs: **`anime_screencap-IL-NOOB_v3`** (`0.75`), **`Bring_Back_Flat`** (`0.60`), **`flatline_v2`** (`0.50`).\n"
+            "    * **2) Plug-and-Play Multi-Arkitektur Autopilot för Illustrious XL, Pony V6 XL, SDXL 1.0, Flux.1 & Qwen-Image i `EZ [03]`, `EZ [04]` & `EZ [10]` (`EZ-04-MULTIARCH-AUTO`)**:\n"
+            "      * **Krea 2 förblir vår #1 Huvudmodell** (med 3-stegs Raw➔Turbo➔Polish), men nybörjare kan nu välja valfri **Illustrious XL**, **Pony**, **SDXL 1.0** eller **Flux.1 Dev/Schnell** direkt i `unet_name` i **`EZ [03]`** (eller via **`EZ [10]`**, som även stödjer Civitai-länkar, `#ModelID` som `#827184` för `WAI-illustrious-SDXL v17` och filnamns-alias som `waiNSFWIllustrious` / `CyberRealistic Pony`)!\n"
+            "      * **100 % Självläkande i `EZ [03]` & `EZ [04]`**: `EZ [03]` auto-detekterar arkitekturen, laddar rätt CLIP (`Dual CLIP-L/G` + `CLIP Skip -2` på Pony/Illustrious; `Dual CLIP-L + T5-XXL` på Flux; `Qwen3-VL 4B` på Krea 2) och rätt VAE (`4ch SDXL-VAE` / `16ch ae.safetensors` / `qwen_image_vae`), samt filtrerar bort inkompatibla LoRAs. `EZ [04]` stänger automatiskt av Steg 2 (`stage2_steps = 0`, `handoff_percent = 100 %`), skalar ner `>1.35 MP` till optimala `~1.1 MP` på 4ch-modeller och sätter rätt Single-Stage-parametrar (**Illustrious: `28 steg, CFG 4.5, euler_ancestral/karras`** mot neonbränning | **Pony: `28 steg, CFG 5.5, euler_ancestral/karras`** | **SDXL: `28 steg, CFG 5.0, dpmpp_2m_sde/karras`** | **DMD2: `8 steg, CFG 1.2`** | **Flux Dev: `24 steg, CFG 1.0, euler/simple`**, **Schnell: `4 steg`**).\n"
             "  * **3) Dubbla Dark-Fantasy-Profiler (`dark-fantasy-real` vs `dark-fantasy-cgi`) & `EZ-03-ANTI3D-GUARD`**:\n"
             "    * **`dark-fantasy-real`** *(Live-Action ARRI Alexa 65 Grimdark — The Witcher / Nosferatu)*: Anamorfisk `35mm f/1.8` Z-ledsbokeh, äkta hudporer (`0.92x` fotoreal-LoRA i `[03]`, `1.0x` i `[05]`), praktiska Weta-horn/svärtat stål och stenhårt förbud mot både `2d digital painting / book cover` och `3d cgi` (`:1.90`).\n"
             "    * **`dark-fantasy-cgi`** *(Diablo IV / Blur Studio Pre-Rendered 3D Cutscene)*: Offline path-traced 3D-VFX, skulpterade demonhorn/graverad gotisk rustning, volumetrisk dimma/glöd (`0.65x` mikrotextur i `[03]` & `[05]`) och stenhårt förbud mot platt 2D-bokomslagskonst (`:1.88`) utan att strypa 3D-CGI.\n"
@@ -162,7 +168,34 @@ STUDIO_GUIDE_CHAPTERS: Dict[str, Dict[str, str]] = {
             "  * **Krea 2 (Flux/Qwen-DiT)**, **Flux.1 Dev/Schnell**, **SDXL 1.0**, **Pony Diffusion V6 XL (`clip_type = pony`)**, **Illustrious XL / NoobAI (`clip_type = illustrious`)** och **MiniMax H3 (`FL2VA` vs `Ref2VA`)**.\n"
             "* **🧩 3) LoRA, DoRA & PRISM Orthogonal SVD (`[03]`, `[05]` & `Model Foundry`)**:\n"
             "  * **LoRA (`Low-Rank Adaptation`) & DoRA (`Weight-Decomposed LoRA`)**: Skyddas av **PRISM Orthogonal SVD** och **Turbo-Shield**.\n"
-            "  * **🏛️ EZ Model Foundry & LoRA Lab (i DevOps Studio — Station 3 `BF16` / Multi-Rank / Anti-3D)**: 5 stationer för dataset, LoRA/DoRA-träning, **Gold Epoch** via PRISM Effective Rank Entropy & Condition Number ($\\kappa = \\sigma_1 / \\sigma_k$), inbyggd **`BF16`/`FP16`/`FP32` SafeTensors-läsning**, **Multi-Rank (`r_a != r_b`, t.ex. Rank 1/4 Slider + Rank 32/64) PRISM Orthogonal SVD Merge**, **Negativ Anti-3D Slider-Subtraktion (`-1.0 .. +1.0`)** samt **Cross-Architecture Guard (`ARCH_MISMATCH`)** som skyddar mot att råka merga Illustrious/SDXL med Krea 2/Flux."
+            "  * **🏛️ EZ Model Foundry & LoRA Lab (i DevOps Studio — Station 3 `BF16` / `I64` Alpha / Zero-Up Kaiming Guard / Anti-3D)**: 5 stationer för dataset, LoRA/DoRA-träning, **Gold Epoch** via PRISM Effective Rank Entropy & Condition Number ($\\kappa = \\sigma_1 / \\sigma_k$), inbyggd **`BF16`/`FP16`/`FP32` + `I64` `.alpha` SafeTensors-läsning**, **Zero-`lora_up` Kaiming-brusspärr**, **automatisk rensning av ensidiga H3-ljudvikter på visuella merges**, **Multi-Rank (`r_a != r_b`) PRISM Orthogonal SVD Merge**, **Negativ Anti-3D Slider-Subtraktion (`-1.0 .. +1.0`)** samt **Cross-Architecture Guard (`ARCH_MISMATCH`)**."
+        ),
+        "prism_recipes": (
+            "### 🧬 8. DE 9 PRISM MERGE-RECEPTEN (`ez_h3_01`–`09`), 7 LORA-KOMBOS I `EZ [05]` & GULDREGLER FÖR LJUD/RÖRELSE\n"
+            "* **🛡️ 5 Kritiska Produktionsregler för `EZ [03]`, `EZ [05]` & `EZ [10]` (Läs alltid först!)**:\n"
+            "  * **0) Local-Priority Skydd (`remote_hub_mode = local_priority` — `🛡️ LOKALA VAL VINNER`)**: Dina lokala modell- och LoRA-val i `EZ [03]` och `EZ [05]` vinner alltid per slot över `EZ [10] Civitai Hub` (`[10]` får endast fylla tomma `None`-slots om du inte manuellt väljer `hub_override`).\n"
+            "  * **1) Rå Bas-UNet vs Inbakad PRISM/Turbo-UNet (`SingularityV2_PRISM2` / `FastH3`)**: På rå basmodell (`PinkCherry_v1.8`, `h3ErosMax_beta5`, `FL2VA-pruned`) kör du **full styrka** (`0.70–0.90` i Slot 1) + `ez_h3_06_dmad_pika_turbo_8step_v1` `ON` (`0.95–1.00`). På **inbakad PRISM/Turbo-UNet** (`10Eros_Max_SingularityV2_PRISM2_PikaFlex`) sänker du LoRA-styrkan med **~25–30 %** (`0.50–0.65` i Slot 1), håller `enable_video_turbo_lora = OFF` och kör `shift_video = 5.0`, `shift_audio = 3.0`, `8 steps`, `CFG 1.0`!\n"
+            "  * **2) Ljudregeln (`lora_X_audio_strength = 0.00` på visuella LoRAs!)**: Sätt **alltid `Audio = 0.00`** på visuella/fysik/anatomi-merges (`ez_h3_01`–`04`, `07`–`09`, `LMS`, `breastplayjiggle`) — `EZ [05]` strippar då alla `audio_in`/`a_attn`/`a_block`-nycklar så 32 kHz FP32 Audio-VAE förblir 100 % fasren. Sätt `Audio = 0.75–1.00` **endast** på `ez_h3_05_sexgod_vocal_drive_v1`, `Audio\\moawxx_000002000` och `ez_h3_06` Turbo!\n"
+            "  * **3) Mer kameradynamik & mindre stelhet i 30s-klipp**: Slå PÅ `allow_camera_movement = true` i `EZ [02]`, lägg `ez_h3_02_kinetic_combat_motion_v1` svagt (`0.25–0.35`) i Slot 2, eller växla `EZ [06]` från `I2VA` till **`REF2VA`** (`motion_transfer_strength = 0.80–0.85`) och sänk `lock_hands_and_fingers` (`0.95`) / `temporal_identity_rigidity` (`0.55`) i `EZ [09]`.\n"
+            "  * **4) Slot 1 = Primary Anchor**: Lägg alltid din primära bas-merge i `video_lora_1` — `EZ [05]` projicerar Slot 2–4 ortogonalt bort från Slot 1!\n"
+            "* **⚗️ De 9 Kirurgiska PRISM SVD Merge-Recepten (Model Foundry Station 3 — `PRISM_ORTHOGONAL_SVD`, `BF16`)**:\n"
+            "  * **🎬 Recept 1 (`ez_h3_01_cinema_physics_core_v1` — SFW Film, Fysik & Skärpa)**: `A = Reasoning\\H3_VBVR_Pro_attn_only` + `B = Reasoning\\minimax_h3_lms_v1.0_r64` | `Anatomy: 0.85 | Style: 0.40 | Alpha: 0.60` ➔ Slot 1: `0.75–0.85` rå (`0.50–0.60` SingularityV2), `Audio: 0.00`.\n"
+            "  * **⚡ Recept 2 (`ez_h3_02_kinetic_combat_motion_v1` — Action, Fight & Kamerapuls)**: `A = Motion\\H3_Combat_V2` + `B = Motion\\H3_Motion_BoosterV2` | `Anatomy: 0.80 | Style: 0.45 | Alpha: 0.60` ➔ Slot 2: `0.55–0.75` rå (`0.30–0.50` SingularityV2), `Audio: 0.00`.\n"
+            "  * **🔥 Recept 3 (`ez_h3_03_mystic_skin_realism_v1` — Fotorealistisk Hud & NSFW Bas)**: `A = Theme\\MysticXXX_MMH3-V5` + `B = Theme\\HMNSFW-Extreme-Realism` | `Anatomy: 0.85 | Style: 0.40 | Alpha: 0.60` ➔ Slot 1: `0.75–0.90` rå (`0.55–0.65` SingularityV2), `Audio: 0.00`.\n"
+            "  * **💎 Recept 4 (`ez_h3_04_intimate_anatomy_jiggle_v1` — Detaljanatomi + Mjukdelsfysik)**: `A = Features\\HMPussyV2` + `B = TnA\\breastplayjiggle_h3_v2` | `Anatomy: 0.80 | Style: 0.45 | Alpha: 0.60` ➔ Slot 2: `0.55–0.70` rå (`0.40–0.52` SingularityV2), `Audio: 0.00`.\n"
+            "  * **🎙️ Recept 5 (`ez_h3_05_sexgod_vocal_drive_v1` — Intensitet + Joint-AV Röst/Andning)**: `A = Theme\\SexGod_NaughtyTimes_v3_rank64_unpruned` + `B = Audio\\moawxx_000002000` | `Anatomy: 0.80 | Style: 0.75 | Alpha: 0.60` ➔ Slot 3: `Video: 0.60 (0.45 SingularityV2)` | **`Audio: 0.85`**.\n"
+            "  * **🚀 Recept 6 (`ez_h3_06_dmad_pika_turbo_8step_v1` — Hybrid 8-Step DMAD + PikaFlex Turbo)**: `A = Turbo\\minimax_h3_dmad_8step_full_critic_lora_bf16` + `B = Turbo\\pika_h3_flex_turbo_8step_fl2va_v1_bf16` | `Anatomy: 0.80 | Style: 0.35 | Alpha: 0.85` ➔ `video_turbo_lora_LOCKED`: `Video: 0.95–1.00 | Audio: 1.00` på råa UNets (`EZ-05-TURBO-GUARD` stänger av den automatiskt på SingularityV2!).\n"
+            "  * **🎌 Recept 7 (`ez_h3_07_sakuga_anime_physics_v1` — SFW 2D Anime & Sakuga)**: `A = Reasoning\\H3_VBVR_Pro_attn_only` + `B = Motion\\H3_Motion_Booster_anime` | `Anatomy: 0.75 | Style: 0.55 | Alpha: 0.55` ➔ Slot 1: `0.75–0.90` rå (`0.55–0.68` SingularityV2), `Audio: 0.00`.\n"
+            "  * **🌸 Recept 8 (`ez_h3_08_anime_nsfw_sakuga_v1` — 2D Hentai / Illustrious XL + Sakuga)**: `A = Theme\\NSFW_ANIME_H3_V16-step00002250` + `B = Motion\\H3_Motion_Booster_anime` | `Anatomy: 0.85 | Style: 0.45 | Alpha: 0.55` ➔ Slot 1: `0.80–0.95` rå (`0.60–0.70` SingularityV2), `Audio: 0.00`.\n"
+            "  * **✨ Recept 9 (`ez_h3_09_glamour_uncensored_skin_v1` — R-Rated Glamour / Dark-Fantasy utan Hardcore-bias)**: `A = Features\\Minimax_H3_Unlocked_V3` + `B = Theme\\HMNSFW-Extreme-Realism` | `Anatomy: 0.80 | Style: 0.45 | Alpha: 0.55` ➔ Slot 1: `0.65–0.80` rå (`0.50–0.60` SingularityV2), `Audio: 0.00`.\n"
+            "* **🎛️ Dina 7 Färdigkalibrerade LoRA-Kombos i `EZ [05]` (`Rå UNet` / `SingularityV2 PRISM`)**:\n"
+            "  * **Kombo 1 (Hollywood SFW & Suno MV)**: Slot 1 `ez_h3_01` (`0.80` / `0.55`, `Audio: 0.00`) + valfri Slot 2 `ez_h3_02` (`0.30` / `0.25`, `Audio: 0.00`).\n"
+            "  * **Kombo 2 (Blockbuster Action & Dans)**: Slot 1 `ez_h3_01` (`0.65` / `0.48`, `Audio: 0.00`) + Slot 2 `ez_h3_02` (`0.70` / `0.50`, `Audio: 0.00`).\n"
+            "  * **Kombo 3 (R-Rated Glamour & Valkyrie Dark-Fantasy)**: Slot 1 `ez_h3_09` (`0.75` / `0.55`) + Slot 2 `ez_h3_01` el. `02` (`0.40` / `0.30`) + valfri Slot 3 `breastplayjiggle_h3_v2` (`0.40` / `0.30`), alla `Audio: 0.00`.\n"
+            "  * **Kombo 4 (Flagship Adult Cinema — Par)**: Slot 1 `ez_h3_03` (`0.75` / `0.55`, `Audio: 0.00`) + Slot 2 `ez_h3_04` (`0.55` / `0.42`, `Audio: 0.00`) + Slot 3 `ez_h3_05` (`Video: 0.60/0.45`, **`Audio: 0.85`**) + valfri Slot 4 specialist (`0.50/0.38`).\n"
+            "  * **Kombo 5 (NSFW Solo + 100 % Rent Röstspår)**: Slot 1 `ez_h3_03` (`0.75` / `0.55`) + Slot 2 `ez_h3_04` (`0.60` / `0.45`) + Slot 3 `hmmasturbation_v2` (`0.68` / `0.50`, `Audio: 0.00`) + Slot 4 `Audio\\moawxx_000002000` (**`Video: 0.00` | `Audio: 0.80`**).\n"
+            "  * **Kombo 6 (2D Anime AMV & Sakuga)**: Slot 1 `ez_h3_07` (`0.85` / `0.62`, `Audio: 0.00`) + valfri Slot 2 `ez_h3_02` (`0.35` / `0.28`, `Audio: 0.00`), `enable_frequency_polish = false` i `[08]`.\n"
+            "  * **Kombo 7 (2D Cel-Shaded NSFW / Illustrious XL)**: Slot 1 `ez_h3_08` (`0.85` / `0.65`) + Slot 2 `breastplayjiggle_h3_v2` (`0.45` / `0.35`) + Slot 3 aktions-LoRA (`0.55` / `0.42`) + Slot 4 `moawxx` (`Video: 0.00 | Audio: 0.75`)."
         ),
     },
     "EN": {
@@ -179,7 +212,9 @@ STUDIO_GUIDE_CHAPTERS: Dict[str, Dict[str, str]] = {
             "  * **Into `[13]`**: Connect `cinematrix_bus` from **`[12] Suno`** (or `[11]` / `[10]`) into `cinematrix_bus` on **`[13]`**.\n"
             "  * **Out of `[13]` (into `[01] Canvas Ingest`)**: Connect `cinematrix_bus ➔ [01] cinematrix_bus`, plus `master_composite_image ➔ optional_image`, `person_reactor_image ➔ ref_image_2_person`, `clothing_ootd_image ➔ ref_image_3_clothing`, and `background_depth_image ➔ ref_image_4_background`.\n"
             "* **Master Duration Sync (`[12]` / `[02]` ➔ `[06]`)**: `master_duration` in **`EZ [02]`** is authoritative when `cinematrix_bus` is connected and syncs with **`EZ [12]`** according to `duration_sync_mode`.\n"
-            "* **Master Video Player in `[08]` vs Live MiniPyAV in `[07]`**: **`EZ [07]`** displays live MiniPyAV sampler frames, while **`EZ [08] Cinema Vault`** hosts the final **`🎬 MASTER VIDEO PLAYER`**."
+            "* **🛡️ Local-First LoRA Shield & Live Header Pills (`EZ [03]`, `EZ [05]` & `EZ [10]`, `remote_hub_mode = local_priority`)**:\n"
+            "  * Selections made directly inside **`EZ [03]`** and **`EZ [05]`** now **always win per slot** by default (`🛡️ LOKALA VAL VINNER`). Leftover LoRAs in **`EZ [10]`** (`⚡ HUB SÄNDER` / `💤 HUB PASSIV`) can never silently overwrite active local slots via the bus, and only fill `None` slots unless `remote_hub_mode` is explicitly set to `hub_override`.\n"
+            "* **Master Video Player in `[08]` vs Live MiniPyAV in `[07]`**: **`EZ [07]`** displays live MiniPyAV sampler frames, while **`EZ [08] Cinema Vault`** hosts the final **`🎬 MASTER VIDEO PLAYER`** (with `-f ffmetadata` long-prompt safety & pre-registered PyAV AAC stream)."
         ),
         "suno": (
             "### 🎵 2. `EZ [12]` SUNO MUSIC VIDEO, SPEECH RECOGNITION (`WHISPER ASR`), AUTO-PROMPT & DURATION SYNC\n"
@@ -219,8 +254,8 @@ STUDIO_GUIDE_CHAPTERS: Dict[str, Dict[str, str]] = {
             "  * **1) 2D Anime on Krea 2 (`EZ-03-ANIME-TURBO-BYPASS` + Negative Anti-3D Slider)**:\n"
             "    * Select **`krea-2-raw-int8-convrot.safetensors`** in `EZ [03]` (`EZ [03]` automatically bypasses photorealistic `krea2_raw_to_turbo` in `anime`/`cartoonish` and mutes positive 3D/realism LoRAs).\n"
             "    * **Negative Anti-3D Slider**: Set `real_3d_krea2_loraholic` or `snofs_photoSlider` to **`-0.35`** — negative weights (`< 0`) pass through intact to subtract 3D shading! Set `i2i_denoise = 0.78 – 0.85` and `enable_frequency_polish = false` in `EZ [04]`.\n"
-            "  * **2) Plug-and-Play Illustrious XL / Pony / SDXL + DMD2 (`EZ-04-ILLUSTRIOUS-AUTO`)**:\n"
-            "    * Select any **Illustrious XL** checkpoint in `unet_name` in **`EZ [03]`**: auto-detects SDXL/Illustrious via path + `.safetensors` header (`input_blocks.`), extracts embedded Dual CLIP-L/G (`CLIP Skip -2`) + 4ch SDXL VAE, strips incompatible Krea 2 LoRAs, and auto-converts Krea 2 defaults in `EZ [04]` to Single-Stage SDXL (**`28 steps, CFG 5.5, euler_ancestral + karras`**) or DMD2 (**`8 steps, CFG 1.20`** with `dmd2_sdxl_4step_lora`). Top flat anime LoRAs: **`anime_screencap-IL-NOOB_v3`**, **`Bring_Back_Flat`**, **`flatline_v2`**.\n"
+            "  * **2) Plug-and-Play Multi-Architecture Autopilot for Illustrious XL, Pony V6 XL, SDXL 1.0, Flux.1 & Qwen-Image (`EZ-04-MULTIARCH-AUTO`)**:\n"
+            "    * While **Krea 2 remains our #1 Flagship** (3-stage Raw➔Turbo➔Polish), selecting any **Illustrious XL**, **Pony**, **SDXL 1.0**, or **Flux.1 Dev/Schnell** model in **`EZ [03]`** (or via **`EZ [10]`**, supporting Civitai URLs, `#ModelID` like `#827184` for `WAI-illustrious-SDXL v17`, and filename aliases) automatically pairs the right CLIP (`CLIP Skip -2` Dual CLIP-L/G for Pony/Illustrious; Dual CLIP-L + T5-XXL for Flux) + VAE (`4ch SDXL` / `16ch ae.safetensors`), strips cross-arch LoRAs, clamps `>1.35 MP` 4ch latents to `~1.1 MP`, and switches `EZ [04]` to Single-Stage (`stage2_steps = 0`, `handoff_percent = 100%`: **Illustrious `CFG 4.5`**, **Pony `CFG 5.5`**, **SDXL `CFG 5.0`**, **DMD2 `CFG 1.2`**, **Flux `CFG 1.0`**).\n"
             "  * **3) Dual Dark-Fantasy Engines (`dark-fantasy-real` vs `dark-fantasy-cgi`) & `EZ-03-ANTI3D-GUARD`**:\n"
             "    * **`dark-fantasy-real`** *(Live-Action ARRI Alexa 65 Grimdark — The Witcher / Nosferatu)*: Anamorphic `35mm f/1.8` deep Z-axis bokeh, real biological pores (`0.92x` photoreal LoRAs in `[03]`, `1.0x` in `[05]`), practical Weta-grade horns/forged dark steel, banning both `2d digital painting / book cover` and `3d cgi` (`:1.90`).\n"
             "    * **`dark-fantasy-cgi`** *(Diablo IV / Blur Studio Pre-Rendered 3D Cutscene)*: Offline path-traced 3D VFX, sculpted demonic horns/engraved gothic armor, volumetric multi-plane fog/embers (`0.65x` micro-texture in `[03]` & `[05]`), banning flat 2D book-cover paintings (`:1.88`) while preserving full 3D VFX shaders.\n"
@@ -287,7 +322,24 @@ STUDIO_GUIDE_CHAPTERS: Dict[str, Dict[str, str]] = {
             "* **🏛️ 2) Model Types**: **Krea 2 (Flux/Qwen-DiT)**, **Flux.1 Dev/Schnell**, **SDXL 1.0**, **Pony V6 XL (`clip_type = pony`)**, **Illustrious XL (`clip_type = illustrious`)**, and **MiniMax H3 (`FL2VA` vs `Ref2VA`)**.\n"
             "* **🧩 3) LoRA, DoRA & PRISM Orthogonal SVD (`[03]`, `[05]` & `Model Foundry`)**:\n"
             "  * **LoRA & DoRA**: Load in standard slots in `[03]` and `[05]`, protected by **PRISM Orthogonal SVD** & **Turbo-Shield**.\n"
-            "  * **🏛️ EZ Model Foundry & LoRA Lab (in DevOps Studio — Station 3 `BF16` / Multi-Rank / Anti-3D)**: 5-station laboratory for Dataset Curation, LoRA/DoRA Training, **Gold Epoch Selection** via PRISM Effective Rank Entropy & Condition Number ($\\kappa = \\sigma_1 / \\sigma_k$), native **`BF16`/`FP16`/`FP32` SafeTensors I/O**, **Multi-Rank (`r_a != r_b`) PRISM Orthogonal SVD Merging**, **Signed Negative Anti-3D Slider Subtraction (`-1.0 .. +1.0`)**, and **Cross-Architecture Guard (`ARCH_MISMATCH`)**."
+            "  * **🏛️ EZ Model Foundry & LoRA Lab (in DevOps Studio — Station 3 `BF16` / `I64` Alpha / Zero-Up Kaiming Guard / Anti-3D)**: 5-station laboratory for Dataset Curation, LoRA/DoRA Training, **Gold Epoch Selection** via PRISM Effective Rank Entropy & Condition Number ($\\kappa = \\sigma_1 / \\sigma_k$), native **`BF16`/`FP16`/`FP32` + `I64` `.alpha` SafeTensors I/O**, **Zero-`lora_up` Kaiming Noise Guard**, **automatic single-sided H3 orphan audio-key stripping**, **Multi-Rank (`r_a != r_b`) PRISM Orthogonal SVD Merging**, **Signed Negative Anti-3D Slider Subtraction (`-1.0 .. +1.0`)**, and **Cross-Architecture Guard (`ARCH_MISMATCH`)**."
+        ),
+        "prism_recipes": (
+            "### 🧬 8. THE 9 PRISM MERGE RECIPES (`ez_h3_01`–`09`), 7 `EZ [05]` LORA COMBOS & AUDIO/MOTION RULES\n"
+            "* **🛡️ Core Calibration Rules in `EZ [03]`, `EZ [05]` & `EZ [10]`**:\n"
+            "  * **Local-Priority Shield (`remote_hub_mode = local_priority` — `🛡️ LOCAL CHOICES WIN`)**: Your local model and LoRA selections in `EZ [03]` and `EZ [05]` always win per slot over `EZ [10] Civitai Hub` (`[10]` may only populate empty `None` slots unless you manually switch `remote_hub_mode` to `hub_override`).\n"
+            "  * **Raw Base UNet vs Baked PRISM/Turbo UNet (`SingularityV2_PRISM2` / `FastH3`)**: Use full recipe weights (`0.70–0.90` in Slot 1) + `ez_h3_06_dmad_pika_turbo_8step_v1` `ON` (`0.95–1.00`) on raw UNets (`PinkCherry`, `h3ErosMax`, `FL2VA-pruned`). On baked PRISM/Turbo UNets (`10Eros_Max_SingularityV2_PRISM2_PikaFlex`), reduce LoRA weights by **~25–30%** (`0.50–0.65` in Slot 1), keep `enable_video_turbo_lora = OFF`, and run `shift_video = 5.0`, `shift_audio = 3.0`, `8 steps`, `CFG 1.0`.\n"
+            "  * **Audio-Mute Strip (`lora_X_audio_strength = 0.00`)**: Keep `Audio = 0.00` on all visual merges (`ez_h3_01`–`04`, `07`–`09`, `LMS`, `breastplayjiggle`) so `EZ [05]` physically strips `audio_in`/`a_attn`/`a_block` keys before injection. Only set `Audio = 0.75–1.00` on `ez_h3_05_sexgod_vocal_drive_v1`, `Audio\\moawxx_000002000`, and `ez_h3_06` Turbo.\n"
+            "* **⚗️ All 9 PRISM Orthogonal SVD Merge Recipes (`PRISM_ORTHOGONAL_SVD`, `BF16`)**:\n"
+            "  * **01 `ez_h3_01_cinema_physics_core_v1`**: `H3_VBVR_Pro_attn_only` + `minimax_h3_lms_v1.0_r64` (`0.85 / 0.40 / 0.60`) — SFW Cinema & Suno MV Primary Anchor.\n"
+            "  * **02 `ez_h3_02_kinetic_combat_motion_v1`**: `H3_Combat_V2` + `H3_Motion_BoosterV2` (`0.80 / 0.45 / 0.60`) — Action, Dance & Camera Motion.\n"
+            "  * **03 `ez_h3_03_mystic_skin_realism_v1`**: `MysticXXX_MMH3-V5` + `HMNSFW-Extreme-Realism` (`0.85 / 0.40 / 0.60`) — Photoreal Skin & NSFW Primary Anchor.\n"
+            "  * **04 `ez_h3_04_intimate_anatomy_jiggle_v1`**: `HMPussyV2` + `breastplayjiggle_h3_v2` (`0.80 / 0.45 / 0.60`) — Micro-Anatomy & Soft-Body Physics (Slot 2).\n"
+            "  * **05 `ez_h3_05_sexgod_vocal_drive_v1`**: `SexGod_NaughtyTimes_v3` + `moawxx_000002000` (`0.80 / 0.75 / 0.60`) — Joint-AV Motion + Vocal Drive (`Audio: 0.85`).\n"
+            "  * **06 `ez_h3_06_dmad_pika_turbo_8step_v1`**: `minimax_h3_dmad_8step_full_critic` + `pika_h3_flex_turbo_8step` (`0.80 / 0.35 / 0.85`) — Locked 8-Step Hybrid Turbo (`EZ-05-TURBO-GUARD` safe).\n"
+            "  * **07 `ez_h3_07_sakuga_anime_physics_v1`**: `H3_VBVR_Pro_attn_only` + `H3_Motion_Booster_anime` (`0.75 / 0.55 / 0.55`) — SFW 2D Anime & AMV Sakuga.\n"
+            "  * **08 `ez_h3_08_anime_nsfw_sakuga_v1`**: `NSFW_ANIME_H3_V16` + `H3_Motion_Booster_anime` (`0.85 / 0.45 / 0.55`) — Illustrious XL 2D NSFW + Sakuga.\n"
+            "  * **09 `ez_h3_09_glamour_uncensored_skin_v1`**: `Minimax_H3_Unlocked_V3` + `HMNSFW-Extreme-Realism` (`0.80 / 0.45 / 0.55`) — R-Rated Glamour & Dark-Fantasy without hardcore bias."
         ),
     },
     "JA": {
@@ -520,6 +572,41 @@ def resolve_note_locale_code(note_locale: str = "Auto (Follow Active UI Locale)"
     return "EN"
 
 
+def _load_runtime_changelog_markdown(lang: str = "SV") -> Tuple[str, str]:
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parent.parent / "CHANGELOG.md",
+        here.parent.parent.parent / "CHANGELOG.md",
+        here.parent.parent.parent.parent / "RELEASES" / "CHANGELOG.md",
+        here.parent / "BLUEPRINTS" / "00_cinematrix_core" / "CHANGELOG.md",
+    ]
+    for cand in candidates:
+        if cand.is_file():
+            raw_md = cand.read_text(encoding="utf-8", errors="replace").strip()
+            if raw_md:
+                m_ver = re.search(r"(\d+\.\d+\.\d+-(?:DEV|STAGING|PRODUCTION))", raw_md)
+                ver_tag = m_ver.group(1) if m_ver else "3.6.1-PRODUCTION"
+                return (ver_tag, raw_md)
+    fallback_tag = "3.6.1-PRODUCTION"
+    if str(lang or "SV").upper().startswith("SV"):
+        fallback_md = (
+            "### 📜 10. VERSIONS- & UPPDATERINGSLOGG (`3.6.1-PRODUCTION` | Freemium `1.1.1-PRODUCTION`)\n"
+            "* **Format (`[Major].[Minor].[Hotfix]-[Environment]`)**: `MAJOR` = arkitekturskifte | `MINOR` = nya funktioner/autopiloter | `HOTFIX` = kirurgiska bugg-/tensorfixar.\n"
+            "* **`3.6.1-PRODUCTION` / `1.1.1-PRODUCTION` [HOTFIX]**: Ref2VA utsnittslås i `EZ [06]`, `t=0` fönster-handoff + 2D Viseme Jaw Soft-Ceiling (`0.58 * tanh`) i `EZ [07]`, samt `'lust for life'` idiomskydd & negativ stilkollisions-läkning i `EZ [02]`.\n"
+            "* **`3.6.0-PRODUCTION` / `1.1.0-PRODUCTION` [MINOR]**: Multi-arkitektur autopilot (`Illustrious`, `Pony`, `SDXL`, `Flux`) med `stage2_steps = 0` och Civitai `#ModelID`/URL-uppslag.\n"
+            "* **`3.5.0-PRODUCTION` / `1.0.0-PRODUCTION` [MAJOR]**: 14-noders `CINEMATRIX_BUS`, PRISM SVD, `EZ [12]` Suno/Whisper ASR & MIT Open-Core Unlimited lansering."
+        )
+    else:
+        fallback_md = (
+            "### 📜 10. VERSION & PATCH CHANGELOG (`3.6.1-PRODUCTION` | Freemium `1.1.1-PRODUCTION`)\n"
+            "* **Scheme (`[Major].[Minor].[Hotfix]-[Environment]`)**: `MAJOR` = architecture shift | `MINOR` = new features/autopilots | `HOTFIX` = surgical bug/tensor fixes.\n"
+            "* **`3.6.1-PRODUCTION` / `1.1.1-PRODUCTION` [HOTFIX]**: Single-ref `Ref2VA` framing lock in `EZ [06]`, `t=0` inter-window handoff + 2D Viseme Jaw Soft-Ceiling (`0.58 * tanh`) in `EZ [07]`, plus `'lust for life'` idiom shield & negative style-collision healer in `EZ [02]`.\n"
+            "* **`3.6.0-PRODUCTION` / `1.1.0-PRODUCTION` [MINOR]**: Multi-architecture autopilot (`Illustrious`, `Pony`, `SDXL`, `Flux`) with `stage2_steps = 0` and Civitai `#ModelID`/URL resolver.\n"
+            "* **`3.5.0-PRODUCTION` / `1.0.0-PRODUCTION` [MAJOR]**: 14-node `CINEMATRIX_BUS`, PRISM SVD, `EZ [12]` Suno/Whisper ASR & MIT Open-Core Unlimited launch."
+        )
+    return (fallback_tag, fallback_md)
+
+
 def compile_localized_studio_note_markdown(
     topic_preset: str,
     note_locale: str = "Auto (Follow Active UI Locale)",
@@ -529,6 +616,7 @@ def compile_localized_studio_note_markdown(
     lang = resolve_note_locale_code(note_locale)
     chapters = STUDIO_GUIDE_CHAPTERS.get(lang, STUDIO_GUIDE_CHAPTERS["EN"])
     preset_str = str(topic_preset or NOTE_TOPIC_PRESETS[0])
+    active_ver_tag, changelog_section_md = _load_runtime_changelog_markdown(lang)
 
     selected_blocks = []
     if preset_str.startswith("1."):
@@ -545,17 +633,23 @@ def compile_localized_studio_note_markdown(
         selected_blocks.append(chapters.get("omniref", chapters["howto"]))
     elif preset_str.startswith("7.") and "Basics" in preset_str:
         selected_blocks.append(chapters.get("basics", STUDIO_GUIDE_CHAPTERS["EN"]["basics"]))
-    elif preset_str.startswith("7.") or preset_str.startswith("8."):
+    elif preset_str.startswith("8.") and "PRISM Merge" in preset_str:
+        selected_blocks.append(chapters.get("prism_recipes", STUDIO_GUIDE_CHAPTERS["SV"]["prism_recipes"] if lang == "SV" else STUDIO_GUIDE_CHAPTERS["EN"]["prism_recipes"]))
+    elif "Custom Studio Notes Only" in preset_str or preset_str.startswith("9."):
         selected_blocks.clear()
+    elif preset_str.startswith("10.") or "Changelog" in preset_str:
+        selected_blocks.append(changelog_section_md)
     else:
         selected_blocks.extend([
             chapters["howto"],
             chapters.get("omniref", ""),
             chapters["suno"],
             chapters["models"],
+            chapters.get("prism_recipes", STUDIO_GUIDE_CHAPTERS["EN"].get("prism_recipes", "")),
             chapters["upscale"],
             chapters["tips"],
             chapters.get("basics", STUDIO_GUIDE_CHAPTERS["EN"]["basics"]),
+            changelog_section_md,
         ])
 
     user_note_clean = str(custom_notes or "").strip()
@@ -649,24 +743,26 @@ def compile_localized_studio_note_markdown(
             s_mod = suno_pkg.get("audio_modality") or (suno_pkg.get("voice_scene_profile") or {}).get("modality", "AUDIO")
             suno_tag = f" | 🎵 Suno={s_name} ({s_bpm} BPM, {s_mod})"
         telemetry_summary = (
-            f"📊 LIVE BUS: Style={style_t} | Mode={rating_t} | Cam={cam_lock} | Seed={img_seed} | "
+            f"📊 LIVE BUS [{active_ver_tag}]: Style={style_t} | Mode={rating_t} | Cam={cam_lock} | Seed={img_seed} | "
             f"FPS={vid_fps} | Upscale={up_mod} | 1xDetailer={det_1x}{dir3_tag}{prism_tag}{omni_tag}{suno_tag}"
         )
         selected_blocks.append(f"### 📊 LIVE CINEMATRIX BUS TELEMETRY\n`{telemetry_summary}`")
 
     compiled_text = "\n\n".join([b for b in selected_blocks if b]).strip()
+    bus_out["ez_version_tag"] = active_ver_tag
     bus_out["studio_note_locale"] = lang
     bus_out["studio_note_topic"] = preset_str
     bus_out["studio_custom_notes"] = user_note_clean
     bus_out["studio_compiled_guide"] = compiled_text
 
     ui_payload = {
+        "version_tag": active_ver_tag,
         "locale": lang,
         "topic_preset": preset_str,
         "custom_notes": user_note_clean,
         "compiled_markdown": compiled_text,
         "telemetry_summary": telemetry_summary,
-        "chapters": chapters,
+        "chapters": {**chapters, "changelog": changelog_section_md},
         "all_locales": STUDIO_GUIDE_CHAPTERS,
     }
     return (compiled_text, bus_out, ui_payload)

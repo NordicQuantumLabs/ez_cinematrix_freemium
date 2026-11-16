@@ -60,6 +60,63 @@ TEMPORAL_WINDOW_HORIZON_MODES = [
     '5s_precision_anchor (5s Fast Intervall — 124r / 37t — Tät Anatomilåsning & 4 Akter/20s)',
     '10s_native_long_take (10s Fast Intervall — 243r / 72t — Native Long-Take & Färre Skarvar)',
 ]
+SCENE_CONTINUITY_MODES = [
+    'auto_from_prompt (Auto från Prompt — Låst Scen / One-Shot Åkning / Hollywood Scenklipp)',
+    'locked_stage_environment (Låst Rum & Miljö — Samma Plats, Ljus & Scen [Musikvideo/Porträtt])',
+    'continuous_one_shot (One-Shot Lång Tagning — Obruten Kameraåkning genom Skiftande Miljöer)',
+    'hollywood_multi_scene_cuts (Hollywood Multi-Scene Cuts — Äkta Filmklipp mellan Akter & Miljöer)',
+]
+
+
+def resolve_scene_continuity_mode(
+    scene_continuity_mode: str = '',
+    user_scene_input: str = '',
+    subject_stance_posture: str = '',
+    body_choreography_preset: str = '',
+    camera_trajectory_arc: str = '',
+) -> str:
+    try:
+        from .engine_ez_02_cinematrix_qwenvl_timeline import resolve_scene_continuity_mode as _ez02_resolve_cont
+        return _ez02_resolve_cont(
+            scene_continuity_mode=scene_continuity_mode,
+            user_scene_input=user_scene_input,
+            subject_stance_posture=subject_stance_posture,
+            body_choreography_preset=body_choreography_preset,
+            camera_trajectory_arc=camera_trajectory_arc,
+        )
+    except Exception:
+        m_low = str(scene_continuity_mode or '').strip().lower()
+        if m_low.startswith('locked_stage'):
+            return 'locked_stage_environment'
+        if m_low.startswith('continuous_one_shot'):
+            return 'continuous_one_shot'
+        if m_low.startswith('hollywood_multi_scene'):
+            return 'hollywood_multi_scene_cuts'
+        return 'locked_stage_environment'
+
+
+def _split_general_narrative_beats(user_scene_input: str, num_shots: int, continuity_mode: str = 'locked_stage_environment') -> list:
+    try:
+        from .engine_ez_02_cinematrix_qwenvl_timeline import _split_general_narrative_beats as _ez02_split_beats
+        return _ez02_split_beats(user_scene_input, num_shots, continuity_mode=continuity_mode)
+    except Exception:
+        return []
+
+
+def extract_editorial_scenecut_window_indices(act_prompts: list, continuity_mode: str = 'locked_stage_environment') -> list:
+    if str(continuity_mode or '').strip().lower() != 'hollywood_multi_scene_cuts' or not isinstance(act_prompts, list):
+        return []
+    cut_indices = []
+    cut_pat = re.compile(
+        r'(?i)(?:\[\s*(?:SCENE[\s_-]*CUT|HARD[\s_-]*CUT|SMASH[\s_-]*CUT)\s*\]|\beditorial\s+scene\s+cut\b|\bcinematic\s+scene\s+cut\b|\bsmash\s+cut\s+to\b|\bmatch\s+cut\s+to\b|\bhard\s+cut\s+to\b|\bcut\s+to\s*:)',
+    )
+    for w_idx, act_txt in enumerate(act_prompts):
+        if w_idx <= 0:
+            continue
+        if cut_pat.search(str(act_txt or '')):
+            cut_indices.append(int(w_idx))
+    return cut_indices
+
 
 
 def resolve_effective_window_horizon_seconds(
@@ -88,14 +145,20 @@ def resolve_effective_window_horizon_seconds(
     return 5.0
 
 
-def _apply_3axis_window_directives_to_acts(acts: list, subject_stance_posture: str = '', body_choreography_preset: str = '', camera_trajectory_arc: str = '') -> list:
+def _apply_3axis_window_directives_to_acts(acts: list, subject_stance_posture: str = '', body_choreography_preset: str = '', camera_trajectory_arc: str = '', motion_physics_mode: str = '', resolved_physics_mode: str = '') -> list:
     if not isinstance(acts, list) or not acts:
         return acts
     st_low = str(subject_stance_posture or '').strip().lower()
     ch_low = str(body_choreography_preset or '').strip().lower()
     arc_low = str(camera_trajectory_arc or '').strip().lower()
-    if st_low.startswith(('auto', '')) and ch_low.startswith(('auto', '')) and arc_low.startswith(('follow_02', 'auto', '')):
+    mp_low = str(motion_physics_mode or '').strip().lower()
+    has_explicit_phys = bool(mp_low) and not mp_low.startswith('auto')
+    if (not st_low or st_low.startswith('auto')) and (not ch_low or ch_low.startswith('auto')) and (not arc_low or arc_low.startswith(('follow_02', 'auto'))) and (not has_explicit_phys):
         return acts
+    eff_phys_key = str(resolved_physics_mode or '').strip()
+    if eff_phys_key not in KINEMATIC_MOTION_PROTOTYPES:
+        eff_phys_key = resolve_effective_motion_physics_mode(motion_physics_mode)
+    phys_pos_cue = str(KINEMATIC_MOTION_PROTOTYPES.get(eff_phys_key, {}).get('pos', '') or '').strip().rstrip('.')
     n_wins = len(acts)
     out = []
     for (idx, a_txt) in enumerate(acts):
@@ -103,60 +166,93 @@ def _apply_3axis_window_directives_to_acts(acts: list, subject_stance_posture: s
         w_tags = []
         if arc_low.startswith('outro_track_to_follow'):
             if idx < max(1, n_wins - 1):
-                w_tags.append('Front-facing backward-tracking dolly retreating ahead of the subject with 100% clear facial visibility')
+                w_tags.append('Front-facing backward-tracking dolly retreating ahead of the subject with 100% clear visibility')
             else:
                 w_tags.append('Smooth 180-degree camera orbit transitioning into a dynamic rear follow-cam tracking behind the subject moving forward into the horizon')
         elif arc_low.startswith('backward_track_'):
-            w_tags.append('Smooth backward-tracking camera retreating ahead of the subject maintaining 100% front-facing facial visibility')
+            w_tags.append('Smooth backward-tracking camera retreating ahead of the subject maintaining 100% front-facing visibility')
         elif arc_low.startswith('crane_ascent'):
             if idx == 0:
                 w_tags.append('Street-level tracking camera establishing the subject')
             elif idx < n_wins - 1:
                 w_tags.append('Ascending cinema crane camera rising smoothly above street level')
             else:
-                w_tags.append('High-altitude aerial drone/crane perspective overlooking the expansive cityscape')
+                w_tags.append('High-altitude aerial drone/crane perspective overlooking the expansive environment')
         if st_low.startswith('story_vehicle'):
             if idx == 0:
-                w_tags.append('Act 1 street-level setup outside the vehicle transitioning from the initial posture of Frame 0 (<Picture 1>)')
+                w_tags.append('Act 1 initial environment setup transitioning smoothly from Frame 0 (<Picture 1>)')
             elif idx < n_wins - 1:
-                w_tags.append('Act 2 seated inside the vehicle/cockpit interior')
+                w_tags.append('Act 2 mid-sequence spatial or vehicle transition')
             else:
-                w_tags.append('Act 3 high-velocity aerial/vehicle motion sequence')
+                w_tags.append('Act 3 culminating motion or destination sequence')
         elif st_low.startswith('standing_upright'):
+            cur_act = re.sub(r'(?i)\b(?:kneeling\s+low\s+on\s+(?:their|her|his|the)\s+knees|crouching\s+low|sitting\s+(?:down|on)|seated\s+comfortably|lying\s+(?:horizontally|flat)|reclining\s+back)\b', 'standing tall and upright in a grounded full-body stance', cur_act)
             if idx == 0:
-                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the subject smoothly rises or transitions into a balanced, grounded upright standing posture facing the camera')
+                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the subject smoothly transitions into a balanced, grounded upright standing posture')
             else:
                 w_tags.append('Posture Lock: Having transitioned into the target posture, the subject remains standing tall and upright in a grounded full-body stance')
         elif st_low.startswith('kneeling_crouching'):
             if idx == 0:
-                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the subject smoothly lowers and transitions down onto their knees into a grounded kneeling and crouching posture on the ground facing the camera')
+                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the subject smoothly lowers onto their knees into a grounded kneeling/crouching posture')
             else:
-                cur_act = re.sub(r'(?i)\b(?:standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance|stands?\s+tall\s+and\s+upright|maintains?\s+her\s+grounded\s+stance|staying\s+upright\s+in\s+her\s+grounded\s+raised-leg\s+stance)\b', 'kneeling low on her knees in a grounded crouching posture on the ground', cur_act)
-                w_tags.append('Posture Lock: Having transitioned into the target posture, the subject remains kneeling low on their knees in a grounded crouching posture facing the camera')
+                cur_act = re.sub(r'(?i)\b(?:standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance|standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+upright|maintains?\s+(?:her|his|their)\s+grounded\s+stance|staying\s+upright(?:\s+in\s+(?:her|his|their)\s+grounded\s+raised-leg\s+stance)?)\b', 'kneeling low on their knees in a grounded crouching posture on the ground', cur_act)
+                w_tags.append('Posture Lock: Having transitioned into the target posture, the subject remains kneeling low in a grounded crouching posture')
         elif st_low.startswith('sitting_'):
             if idx == 0:
-                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the subject smoothly settles and transitions into a comfortable seated posture')
+                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the subject smoothly settles into a natural seated posture')
             else:
-                w_tags.append('Posture Lock: Having transitioned into the target posture, the subject remains seated comfortably with natural upper-body posture')
+                cur_act = re.sub(r'(?i)\b(?:standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+upright|standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance|staying\s+upright|lying\s+flat\s+on\s+the\s+floor)\b', 'seated comfortably in a grounded sitting posture', cur_act)
+                w_tags.append('Posture Lock: Having transitioned into the target posture, the subject remains seated comfortably with natural upper-body articulation')
         elif st_low.startswith('reclining_'):
             if idx == 0:
-                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the subject smoothly leans back and transitions into a relaxed reclining/lounging posture')
+                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the subject smoothly leans back into a relaxed reclining posture')
             else:
-                w_tags.append('Posture Lock: Having transitioned into the target posture, the subject remains reclining in a relaxed lounging posture')
+                cur_act = re.sub(r'(?i)\b(?:standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+upright|standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance|staying\s+upright)\b', 'reclining comfortably in a relaxed lounging posture', cur_act)
+                w_tags.append('Posture Lock: Having transitioned into the target posture, the subject remains in a relaxed reclining/lounging posture')
         elif st_low.startswith('lying_'):
             if idx == 0:
-                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the subject smoothly lowers down and transitions into a horizontal lying posture')
+                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the subject smoothly lowers into a horizontal lying posture')
             else:
-                w_tags.append('Posture Lock: Having transitioned into the target posture, the subject remains lying down in a horizontal posture')
+                cur_act = re.sub(r'(?i)\b(?:standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+upright|standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance|staying\s+upright|sitting\s+upright)\b', 'lying horizontally in a continuous supine/prone posture', cur_act)
+                w_tags.append('Posture Lock: Having transitioned into the target posture, the subject remains lying horizontally with natural body weight')
         elif st_low.startswith(('standing_social', 'epic_battlefield')):
             if idx == 0:
-                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the primary subject smoothly transitions into a poised foreground standing stance')
+                w_tags.append('Posture Transition: Starting from the initial posture of Frame 0 (<Picture 1>), the primary subject establishes a poised foreground stance amidst the surrounding cast')
             else:
-                w_tags.append('Posture Lock: Having transitioned into the target posture, the primary subject maintains a poised foreground standing stance')
+                w_tags.append('Posture Lock: The primary subject maintains a poised foreground stance with coherent background ensemble continuity')
+        elif st_low.startswith('nsfw_solo'):
+            w_tags.append('Stance: Intimate solo or two-person adult staging preserving full anatomical continuity, natural skin contact, and prompted body positioning from Frame 0 (<Picture 1>)')
+        elif st_low.startswith('nsfw_threesome'):
+            w_tags.append('Stance: Multi-participant intimate group staging (3-5 participants) keeping distinct individual identities, clear spatial layering, and coherent anatomical interaction')
+        elif st_low.startswith('nsfw_orgy'):
+            w_tags.append('Stance: Ensemble adult harem/group staging (6+ participants) preserving foreground lead clarity alongside coherent multi-figure background arrangement')
         if ch_low.startswith('dance_sensual_club'):
             w_tags.append('Choreography: Sensual club dance with fluid body-rolls, rhythmic hip-sway, and expressive torso articulation')
         elif ch_low.startswith('dance_music_video'):
-            w_tags.append('Choreography: Beat-synchronized music-video dance groove with rhythmic shoulder and hip motion')
+            w_tags.append('Choreography: Beat-synchronized music-video dance groove with rhythmic shoulder, arm, and hip motion')
+        elif ch_low.startswith('catwalk_runway'):
+            w_tags.append('Choreography: Confident forward catwalk stride toward the camera with rhythmic hip counterbalance and poised posture')
+        elif ch_low.startswith('running_action'):
+            w_tags.append('Choreography: High-energy athletic forward sprint with driving arm-pump mechanics and grounded stride momentum')
+        elif ch_low.startswith('combat_guard'):
+            w_tags.append('Choreography: Balanced martial combat guard, crisp defensive parries, agile footwork pivots, and reactive close-quarters counters')
+        elif ch_low.startswith('combat_heavy'):
+            w_tags.append('Choreography: High-momentum heavy weapon swings and committed multi-strike combinations with grounded kinetic follow-through')
+        elif ch_low.startswith('social_toast'):
+            w_tags.append('Choreography: Natural conversational gestures, raising a glass or utensil, expressive upper-body articulation, and relaxed social interaction')
+        elif ch_low.startswith('story_multi_act'):
+            if idx == 0:
+                w_tags.append('Choreography: Act 1 opening narrative action departing smoothly from the initial state of Frame 0 (<Picture 1>)')
+            elif idx < n_wins - 1:
+                w_tags.append('Choreography: Act 2 progressive narrative escalation advancing the prompted physical action cleanly')
+            else:
+                w_tags.append('Choreography: Act 3 culminating narrative resolution completing the prompted physical trajectory')
+        elif ch_low.startswith('nsfw_sensual_solo'):
+            w_tags.append('Choreography: Unhurried sensual solo body articulation, smooth posture shifts, expressive tactile motion, and natural anatomical continuity')
+        elif ch_low.startswith('nsfw_rhythmic_intimate'):
+            w_tags.append('Choreography: Continuous rhythmic intimate motion, synchronized coupled or solo pelvic and torso kinematics, and uninterrupted anatomical contact')
+        if has_explicit_phys and phys_pos_cue:
+            w_tags.append(f'Kinematics: {phys_pos_cue}')
         if w_tags:
             prefix = ' | '.join(w_tags)
             if '[Shot 1]\n' in cur_act:
@@ -168,7 +264,7 @@ def _apply_3axis_window_directives_to_acts(acts: list, subject_stance_posture: s
 
 KINEMATIC_MOTION_PROTOTYPES = {
     'natural_organic': {
-        'pos': 'Fluid natural human biomechanics, realistic physical weight and momentum, smooth organic joint articulation, natural micro-breathing, grounded center of gravity without temporal jitter.',
+        'pos': 'Fluid natural biological biomechanics, realistic physical weight and momentum, smooth organic joint articulation, natural micro-breathing, grounded center of gravity without temporal jitter.',
         'anti': 'jerky unnatural movement, robotic twitching, floating weightless limbs, temporal flickering, morphing body mass, chaotic frame-to-frame distortion.',
         'alpha': 0.22,
         'token_prefix_len': 14,
@@ -213,70 +309,198 @@ def resolve_effective_motion_physics_mode(motion_physics_mode: str, style_target
 
 
 _DIRECTOR_EROTIC_REGEX = re.compile(
-    r'(?i)\b(?:nude|nudity|naked|bottomless|unclothed|undressed|pussy|vagina|labia|vulva|clit(?:oris)?|penis|dick|cock|erection|phallus|testicles?|anus|anal|genitals?|genitalia|sex|sexual|intercourse|penetration|orgasm|climax|cum(?:ming)?|semen|sperm|milky\s+liquid|spread\s+legs)\b'
+    r'(?i)\b(?:nude|nudity|naked|topless|bottomless|unclothed|undressed|undress(?:es|ing)?|strip(?:s|ping)?|pussy|vagina|labia|vulva|clit(?:oris)?|penis|dick|cock|erection|phallus|testicles?|anus|anal|genitals?|genitalia|sex|sexual|erotic|nsfw|intercourse|penetration|blowjob|fellatio|cunnilingus|handjob|masturbat(?:e|es|ing|ion)|thrust(?:s|ing)?|cowgirl|doggy(?:\s*style)?|missionary|orgasm|climax|cum(?:ming)?|semen|sperm|milky\s+liquid|spread\s+legs|naken|nakna|samlag|älskog|knulla(?:r)?|kuk|fitta|bröst|tuttar|orgie|trekant|avklädd(?:a)?|klär\s+av|tar\s+av\s+sig|onani|onanerar|suger|slickar|runkar|stönar)\b'
 )
 
 
-def _resolve_content_rating_tier(content_rating_mode: str, timeline_prompt: str = '') -> str:
+def _resolve_content_rating_tier(content_rating_mode: str, timeline_prompt: str = '', subject_stance_posture: str = '', body_choreography_preset: str = '') -> str:
     m_low = str(content_rating_mode or '').strip().lower()
     if m_low.startswith('sfw'):
         return 'sfw'
-    if m_low.startswith('uncensored'):
-        return 'uncensored_action'
     if 'explicit' in m_low or 'erotic' in m_low or m_low.startswith('nsfw'):
         return 'nsfw_explicit'
+    st_low = str(subject_stance_posture or '').strip().lower()
+    ch_low = str(body_choreography_preset or '').strip().lower()
+    if st_low.startswith('nsfw_') or ch_low.startswith('nsfw_'):
+        return 'nsfw_explicit'
+    if _DIRECTOR_EROTIC_REGEX.search(str(timeline_prompt or '')):
+        return 'nsfw_explicit'
+    if m_low.startswith('uncensored'):
+        return 'uncensored_action'
     return 'uncensored_action'
+
+
+_DIRECTOR_HUMAN_REGEX = re.compile(
+    r'(?i)\b(?:woman|women|man|men|girl|boy|person|people|lady|gentleman|human|humanoid|cyborg|android|elf|elven|orc|half[-\s]?orc|dwarf|goblin|tiefling|vampire|princess|prince|queen|king|priestess|heroine|warrior|knight|bartender|anchor|singer|vocalist|dancer|lover|couple|she|her|he|him|kvinna|kvinnor|manlig|män|tjej|flicka|kille|pojke|människ\w*)\b'
+)
+_DIRECTOR_AVIAN_REGEX = re.compile(
+    r'(?i)\b(?:bird|birds|sparrow|robin|finch|swallow|hummingbird|eagle|hawk|falcon|owl|crow|raven|magpie|parrot|macaw|cockatoo|swan|duck|goose|seagull|pigeon|dove|peacock|penguin|phoenix|griffin|fågel|fåglar|sparv|örn|hök|falk|uggla|kråka|korp|skata|papegoja|svan|anka|mås|duva)\b'
+)
+_DIRECTOR_ANIMAL_REGEX = re.compile(
+    r'(?i)\b(?:mouse|mice|rat|rats|rodent|hamster|gerbil|squirrel|chipmunk|beaver|rabbit|bunny|hare|hedgehog|ferret|otter|badger|weasel|stoat|cat|cats|kitten|feline|lion|tiger|panther|leopard|cheetah|jaguar|lynx|cougar|dog|dogs|puppy|hound|canine|wolf|wolves|fox|foxes|coyote|bear|bears|panda|koala|horse|stallion|mare|foal|pony|deer|stag|doe|fawn|moose|elk|reindeer|caribou|elephant|rhino|rhinoceros|hippo|giraffe|zebra|bison|buffalo|cow|bull|goat|sheep|ram|pig|boar|hog|monkey|chimp|ape|gorilla|orangutan|lemur|sloth|bat|whale|dolphin|orca|seal|walrus|shark|fish|salmon|koi|goldfish|octopus|squid|jellyfish|crab|lobster|shrimp|turtle|tortoise|frog|toad|salamander|axolotl|snake|serpent|cobra|viper|python|lizard|gecko|iguana|chameleon|crocodile|alligator|dinosaur|raptor|t-rex|trex|dragon|wyvern|hydra|kaiju|butterfly|moth|bee|bumblebee|wasp|beetle|ladybug|ant|spider|tarantula|scorpion|mantis|dragonfly|snail|mus|möss|råtta|råttor|gnagare|ekorre|bäver|kanin|hare|igelkott|utter|grävling|katt|katter|kattunge|lejon|tiger|panter|lodjur|hund|hundar|valp|varg|vargar|räv|björn|häst|hjort|rådjur|älg|ren|elefant|nosörning|flodhäst|giraff|apa|gorilla|val|delfin|säl|haj|fisk|bläckfisk|krabba|sköldpadda|groda|padda|orm|ödla|krokodil|dinosaurie|drake|fjäril|bi|humla|geting|skalbagge|myra|spindel|snigel)\b'
+)
+_DIRECTOR_VEHICLE_REGEX = re.compile(
+    r'(?i)\b(?:sports\s+car|race\s+car|vehicle|automobile|sedan|suv|truck|pickup|motorcycle|motorbike|spaceship|starship|spacecraft|fighter\s+jet|airliner|aircraft|helicopter|drone|mecha|submarine|battleship|sailboat|yacht|locomotive|train|sportbil|racerbil|svävare|lastbil|motorcykel|rymdskepp|flygplan|stridsflygplan|helikopter|drönare|ubåt|segelbåt|lokomotiv|tåg)\b'
+)
+_DIRECTOR_METAMORPH_REGEX = re.compile(
+    r'(?i)\b(?:transform(?:s|ing|ed)?\s+into|morph(?:s|ing|ed)?\s+into|turn(?:s|ing|ed)?\s+into|shapeshift\w*|metamorphos\w*|transmut(?:e|es|ing|ed)\s+into|förvandlas\s+till|förvandlar\s+sig\s+till|blir\s+till\s+en)\b'
+)
+
+
+def _build_director_preset_and_species_authority(
+    timeline_prompt: str = '',
+    user_scene_input: str = '',
+    subject_stance_posture: str = '',
+    body_choreography_preset: str = '',
+    camera_trajectory_arc: str = '',
+    motion_physics_mode: str = '',
+    resolved_physics_mode: str = '',
+    allow_camera_movement: bool = False,
+    has_keyframe_ref: bool = False,
+    existing_negative: str = '',
+) -> dict:
+    u_txt = str(user_scene_input or '').strip()
+    t_txt = str(timeline_prompt or '').strip()
+    scan_u = u_txt if u_txt else t_txt
+    scan_all = f'{u_txt} {t_txt}'.strip()
+    allows_meta = bool(_DIRECTOR_METAMORPH_REGEX.search(scan_u))
+    u_has_human = bool(_DIRECTOR_HUMAN_REGEX.search(scan_u)) or bool(re.search(r'(?i)\b\d{1,2}-year-old\b', u_txt))
+    u_av = _DIRECTOR_AVIAN_REGEX.search(scan_u)
+    u_an = _DIRECTOR_ANIMAL_REGEX.search(scan_u)
+    u_vh = _DIRECTOR_VEHICLE_REGEX.search(scan_u)
+    t_has_human = bool(_DIRECTOR_HUMAN_REGEX.search(t_txt))
+    av_m = u_av or (_DIRECTOR_AVIAN_REGEX.search(t_txt) if not u_has_human else None)
+    an_m = u_an or (_DIRECTOR_ANIMAL_REGEX.search(t_txt) if not u_has_human else None)
+    vh_m = u_vh or (_DIRECTOR_VEHICLE_REGEX.search(t_txt) if not u_has_human else None)
+    has_avian_prompted = bool(av_m) or bool(re.search(r'(?i)\b(?:wings?|winged|feathers?|feathered|beak|talons?|vingar|fjädrar|näbb)\b', scan_u))
+    is_animal = bool(av_m or an_m) and (not u_has_human) and (bool(u_av or u_an) or not t_has_human)
+    is_vehicle = (not is_animal) and bool(vh_m) and (not u_has_human) and (bool(u_vh) or not t_has_human)
+    is_non_human = bool(is_animal or is_vehicle)
+    matched_sp = av_m.group(0).lower() if av_m else (an_m.group(0).lower() if an_m else (vh_m.group(0).lower() if vh_m else ''))
+    neg_parts = []
+    if is_animal:
+        surf_sp = 'natural plumage and feathers' if bool(av_m) else 'natural coat, fur, or skin texture'
+        species_lock_phrase = (
+            f'exact {matched_sp} species anatomy, {surf_sp}, head morphology, and authentic biological proportions'
+            if matched_sp else
+            f'exact animal species morphology, {surf_sp}, and authentic biological proportions'
+        )
+        if not allows_meta:
+            if bool(av_m) or has_avian_prompted:
+                neg_parts.append('(species swap, morphing into mammal or rodent, four-legged mammal body, human face on bird, human hands, human clothes:1.90)')
+            else:
+                neg_parts.append('(species swap, morphing into another animal, turning into a bird, unrequested wings, feathers, beak, avian talons, human face on animal, human hands, human clothes, anthropomorphic human body:1.92)')
+    elif is_vehicle:
+        species_lock_phrase = f'exact {matched_sp or "object"} mechanical geometry, chassis proportions, and physical surface materials'
+        if not allows_meta:
+            neg_parts.append('(morphing into animal or bird, organic flesh on vehicle, unrequested human face:1.80)')
+    else:
+        species_lock_phrase = ''
+        if has_keyframe_ref and not allows_meta and not has_avian_prompted:
+            neg_parts.append('(species mutation from reference image, morphing subject into bird or different animal, unrequested wings or beak:1.75)')
+    st_low = str(subject_stance_posture or '').strip().lower()
+    ch_low = str(body_choreography_preset or '').strip().lower()
+    arc_low = str(camera_trajectory_arc or '').strip().lower()
+    mp_low = str(motion_physics_mode or '').strip().lower()
+    st_pat = ''
+    st_repl = ''
+    if st_low.startswith('standing_upright'):
+        neg_parts.append('(sitting down, seated on chair, lying flat on bed, lying on floor, kneeling on knees, crouching low, crawling:1.75)')
+        st_pat = r'(?i)\b(?:kneeling\s+low\s+on\s+(?:their|her|his|the)\s+knees|crouching\s+low|sitting\s+(?:down|on)|seated\s+comfortably|lying\s+(?:horizontally|flat)|reclining\s+back)\b'
+        st_repl = 'standing tall and upright in a grounded full-body stance'
+    elif st_low.startswith('sitting_'):
+        neg_parts.append('(standing tall, standing upright, walking across room, running sprint, lying flat on floor:1.75)')
+        st_pat = r'(?i)\b(?:standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+upright|standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance|staying\s+upright|lying\s+flat\s+on\s+the\s+floor)\b'
+        st_repl = 'seated comfortably in a grounded sitting posture'
+    elif st_low.startswith('reclining_'):
+        neg_parts.append('(standing tall, standing upright, rigid military posture, walking, running:1.75)')
+        st_pat = r'(?i)\b(?:standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+upright|standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance|staying\s+upright)\b'
+        st_repl = 'reclining comfortably in a relaxed lounging posture'
+    elif st_low.startswith('lying_'):
+        neg_parts.append('(standing tall, standing upright, walking, running, sitting upright in chair:1.80)')
+        st_pat = r'(?i)\b(?:standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+upright|standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance|staying\s+upright|sitting\s+upright)\b'
+        st_repl = 'lying horizontally in a continuous supine/prone posture'
+    elif st_low.startswith('kneeling_crouching'):
+        neg_parts.append('(standing tall, standing upright, straight locked knees, upright walking stride:1.80)')
+        st_pat = r'(?i)\b(?:standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance(?:\s+with\s+one\s+leg\s+raised)?|standing\s+tall(?:\s+and\s+upright)?|stands?\s+tall(?:\s+and\s+upright)?|standing\s+upright|maintains?\s+(?:her|his|their)\s+grounded\s+stance|staying\s+upright(?:\s+in\s+frame)?)\b'
+        st_repl = 'kneeling low on their knees in a grounded crouching posture on the ground'
+    elif st_low.startswith('nsfw_solo'):
+        neg_parts.append('(stiff mannequin pose, frozen robotic limbs, unprompted heavy armor covering body, disconnected floating limbs:1.75)')
+    elif st_low.startswith(('nsfw_threesome', 'nsfw_orgy')):
+        neg_parts.append('(single isolated solo person, fused bodies, merged heads, cloned identical faces, extra disembodied limbs:1.85)')
+    if ch_low.startswith(('dance_sensual_club', 'dance_music_video')):
+        neg_parts.append('(static frozen pose, stiff motionless torso, rigid locked hips, statue-like stillness, frozen frame:1.80)')
+    elif ch_low.startswith('catwalk_runway'):
+        neg_parts.append('(static standing still, sitting down, walking backward, frozen legs:1.75)')
+    elif ch_low.startswith('running_action'):
+        neg_parts.append('(static standing still, slow idle standing, sitting, frozen legs, zero forward motion:1.85)')
+    elif ch_low.startswith(('combat_guard', 'combat_heavy')):
+        neg_parts.append('(passive idle standing, limp arms, frozen mannequin posture, zero kinetic weight:1.80)')
+    elif ch_low.startswith('social_toast'):
+        neg_parts.append('(frozen statue posture, rigid motionless arms, blank robotic stare:1.65)')
+    elif ch_low.startswith('nsfw_sensual_solo'):
+        neg_parts.append('(static frozen pose, stiff wooden mannequin body, robotic jerky twitching, unprompted clothing appearing mid-shot:1.80)')
+    elif ch_low.startswith('nsfw_rhythmic_intimate'):
+        neg_parts.append('(static frozen pose, motionless hips, stiff rigid pelvis, statue-like stillness, mannequin pose, separated disconnected bodies:1.88)')
+    if arc_low.startswith(('outro_track_to_follow', 'backward_track_', 'crane_ascent')):
+        neg_parts.append('(static locked-off tripod camera, frozen background perspective, zero camera movement:1.75)')
+    elif not allow_camera_movement:
+        neg_parts.append('(camera zoom-in, dolly-in, push-in, camera pan, whip-pan, zoom-out, hard jump cut:1.65)')
+    if mp_low and not mp_low.startswith('auto'):
+        eff_p = str(resolved_physics_mode or '').strip()
+        if eff_p not in KINEMATIC_MOTION_PROTOTYPES:
+            eff_p = resolve_effective_motion_physics_mode(motion_physics_mode)
+        anti_p = str(KINEMATIC_MOTION_PROTOTYPES.get(eff_p, {}).get('anti', '') or '').strip().rstrip('.')
+        if anti_p:
+            neg_parts.append(f'({anti_p}:1.70)')
+    base_neg = str(existing_negative or '').strip()
+    base_low = base_neg.lower()
+    fresh_injections = [np_item for np_item in neg_parts if np_item[:26].lower() not in base_low]
+    merged_neg = (', '.join(fresh_injections) + (f', {base_neg}' if base_neg else '')) if fresh_injections else base_neg
+    return {
+        'merged_negative': merged_neg,
+        'neg_injections': fresh_injections,
+        'is_non_human': is_non_human,
+        'is_animal': is_animal,
+        'is_avian': bool(av_m),
+        'matched_species': matched_sp,
+        'species_lock_phrase': species_lock_phrase,
+        'stance_conflict_pat': st_pat,
+        'stance_conflict_repl': st_repl,
+    }
 
 
 def _scrub_unrequested_genital_hallucinations(text_in: str, user_scene_input: str = '') -> str:
     s = str(text_in or '')
     u_low = str(user_scene_input or '').lower()
-    if any(k in u_low for k in ('vulva', 'vagina', 'labia', 'pussy', 'clit', 'penis', 'cock', 'dick', 'genital', 'nude', 'naked', 'nip slip', 'nipple', 'panties', 'bottomless', 'crotchless')):
+    if _DIRECTOR_EROTIC_REGEX.search(u_low) or any(k in u_low for k in ('nip slip', 'nipple', 'panties', 'crotchless')):
         return s.strip()
     s = re.sub(
         r'(?i)\bthat\s+(?:partially\s+|barely\s+)?(?:occludes|covers|hides|conceals|exposes|reveals)\s+(?:her|his|their)\s+[^.,;]*',
-        'resting securely in place',
+        'resting naturally in place',
         s,
     )
     s = re.sub(
         r'(?i)\b(?:briefly\s+|partially\s+|fully\s+)?(?:exposing|revealing|showing|baring)\s+(?:her|his|their)\s+(?:bare\s+|wet\s+|glistening\s+|shaven\s+|anatomical\s+)?(?:vulva|vagina|labia|pussy|clit(?:oris)?|genitals?|genitalia|groin|pelvis|anus|penis|cock|dick)\b',
-        'keeping her attire securely in place',
+        'maintaining modest wardrobe coverage',
         s,
     )
     s = re.sub(
         r'(?i)\b(?:vulva|vagina|labia(?:\s+majora|\s+minora)?|pussy|clit(?:oris)?|penis|cock|dick|erection|testicles?|anus|anal|genitals?|genitalia|bottomless|crotchless|intercourse|penetration|orgasm|climax|cum|semen|sperm|milky\s+liquid)\b',
-        'intact attire coverage',
+        'modest attire',
         s,
     )
-    return re.sub(r'(?:intact attire coverage[\s,]*){2,}', 'intact attire coverage ', s).strip()
+    return re.sub(r'(?:modest attire[\s,]*){2,}', 'modest attire ', s).strip()
 
 
-def _scrub_sfx_vocal_triggers(text_in: str) -> str:
+def _scrub_sfx_vocal_triggers(text_in: str, user_scene_input: str = '') -> str:
     s = str(text_in or '')
-    has_tusk_ctx = bool(re.search(r'(?i)\b(?:orc|tusks?|half-orc)\b', s))
+    u_low = str(user_scene_input or '').lower()
+    if any(k in u_low for k in ('sing', 'sings', 'singing', 'lyrics', 'choir', 'chant', 'sjunger', 'sång')):
+        return s
     s = re.sub(
-        r'(?i)\b(?:starts?\s+praying\s+to|praying\s+to|prays?\s+to)\b',
-        'stands tall and upright holding in silent reverence',
-        s,
-    )
-    s = re.sub(
-        r'(?i)\b(?:praying(?:\s+aloud|\s+fervently|\s+silently)?|prays?|prayer|chanting|chants?|intoning|reciting|uttering|muttering|speaking|speaks?|spoken\s+words?|calling\s+out|invoking)\b',
-        'holding a silent composed posture',
-        s,
-    )
-    s = re.sub(
-        r'(?i)\b(?:with\s+)?(?:heavy\s+breathing|breathing\s+heavily|ragged\s+breathing|labored\s+breathing|audible\s+breathing|panting(?:\s+heavily)?|gasping(?:\s+for\s+air)?|groaning|groans|grunting|grunts|moaning|moans|sighing|vocal\s+sighs|sighs|roaring|roars|screaming|screams|shouting|shouts|yelling|battle\s+cry|war\s+cry|mumbling|talking|whispering|whispers)\b',
-        'silent focused intensity and natural ambient foley',
-        s,
-    )
-    mouth_repl = (
-        'fierce silent expression with two sharp protruding white lower-jaw orc tusks clearly visible outside her lips'
-        if has_tusk_ctx else
-        'firmly closed mouth and fierce silent expression'
-    )
-    s = re.sub(
-        r'(?i)\b(?:parted\s+lips|open\s+mouth|mouth\s+open(?:\s+wide)?|jaw\s+dropped|lips\s+parted|lips\s+moving)\b',
-        mouth_repl,
+        r'(?i)\b(?:singing\s+(?:aloud|the\s+lead\s+vocals|the\s+lyrics|expressively)|belting\s+out\s+lyrics|choir\s+singing|lip[-\s]?syncing\s+(?:to\s+)?(?:the\s+)?lyrics)\b',
+        'expressing natural physical emotion',
         s,
     )
     return s
@@ -327,18 +551,28 @@ def project_video_kinematic_conditioning(
                 raw_diff = p_t.mean(dim=1, keepdim=True) - a_t.mean(dim=1, keepdim=True)
                 dir_vec = F.normalize(raw_diff, p=2.0, dim=-1).detach().cpu()
                 cache_dict[ckey] = dir_vec
-        if not isinstance(dir_vec, torch.Tensor) or str(video_arch or '').lower() == 'minimax_h3':
+        if not isinstance(dir_vec, torch.Tensor):
             return (positive_cond, negative_cond)
+        is_h3_proj = (str(video_arch or '').lower() == 'minimax_h3')
         out_pos = []
         for item in positive_cond:
             if isinstance(item, (list, tuple)) and len(item) >= 2 and isinstance(item[0], torch.Tensor) and item[0].ndim == 3 and int(item[0].shape[-1]) == dim_d:
                 ct = item[0].clone()
-                plen = min(int(ct.shape[1]), prefix_len)
-                sub = ct[:, :plen, :].float()
-                orig_norm = torch.norm(sub, p=2.0, dim=-1, keepdim=True).clamp(min=1e-05)
-                dv = dir_vec.to(device=sub.device, dtype=torch.float32)
-                shifted = F.normalize(sub + dv * (orig_norm * alpha * 0.18), p=2.0, dim=-1) * orig_norm
-                ct[:, :plen, :] = shifted.to(dtype=ct.dtype)
+                seq_len = int(ct.shape[1])
+                plen = min(seq_len, prefix_len)
+                if is_h3_proj:
+                    t_start = max(1, seq_len - plen) if seq_len > (plen + 8) else max(1, seq_len // 2)
+                    sub = ct[:, t_start:, :].float()
+                    orig_norm = torch.norm(sub, p=2.0, dim=-1, keepdim=True).clamp(min=1e-05)
+                    dv = dir_vec.to(device=sub.device, dtype=torch.float32)
+                    shifted = F.normalize(sub + dv * (orig_norm * alpha * 0.12), p=2.0, dim=-1) * orig_norm
+                    ct[:, t_start:, :] = shifted.to(dtype=ct.dtype)
+                else:
+                    sub = ct[:, :plen, :].float()
+                    orig_norm = torch.norm(sub, p=2.0, dim=-1, keepdim=True).clamp(min=1e-05)
+                    dv = dir_vec.to(device=sub.device, dtype=torch.float32)
+                    shifted = F.normalize(sub + dv * (orig_norm * alpha * 0.18), p=2.0, dim=-1) * orig_norm
+                    ct[:, :plen, :] = shifted.to(dtype=ct.dtype)
                 out_pos.append([ct, item[1]])
             else:
                 out_pos.append(item)
@@ -631,19 +865,31 @@ def _parse_structured_continuity_parts(raw_text: str, is_ref2va: bool=False) -> 
     return parsed_acts
 
 
-def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3, is_ref2va: bool=False, is_vocal_override: bool=False, user_scene_input: str='', allow_camera_movement: bool=False, subject_stance_posture: str='') -> list:
+def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3, is_ref2va: bool=False, is_vocal_override: bool=False, user_scene_input: str='', allow_camera_movement: bool=False, subject_stance_posture: str='', scene_continuity_mode: str='', rating_tier: str='uncensored_action') -> list:
     raw = str(timeline_prompt or '').strip()
     if not raw:
         return []
     if not str(user_scene_input or '').strip():
         user_scene_input = raw
+    tier_low_extract = str(rating_tier or 'uncensored_action').strip().lower()
+    eff_cont_mode = resolve_scene_continuity_mode(
+        scene_continuity_mode=scene_continuity_mode,
+        user_scene_input=user_scene_input or raw,
+        subject_stance_posture=subject_stance_posture,
+    )
+    is_locked_stage_06 = (eff_cont_mode == 'locked_stage_environment')
+    is_one_shot_06 = (eff_cont_mode == 'continuous_one_shot')
+    is_multi_cut_06 = (eff_cont_mode == 'hollywood_multi_scene_cuts')
+    if not is_locked_stage_06:
+        allow_camera_movement = True
     target_wins = max(1, int(num_windows or 1))
     structured_acts = _parse_structured_continuity_parts(raw, is_ref2va=is_ref2va)
     if structured_acts:
         while len(structured_acts) < target_wins:
             structured_acts.append(structured_acts[-1])
         return structured_acts[:max(target_wins, len(structured_acts))]
-    raw = _scrub_unrequested_genital_hallucinations(raw, user_scene_input)
+    if tier_low_extract == 'sfw':
+        raw = _scrub_unrequested_genital_hallucinations(raw, '')
     ref_pic_lbl = '<Picture 1>' if is_ref2va else 'the initial keyframe'
     ref_subj_lbl = '<Subject 1>' if is_ref2va else 'the primary subject'
     raw = re.sub('(?i)\\[\\s*Master\\s+Scene[^\\]\\n]*\\][\\s:*#\\-]*', '\n[Master Scene & Visual Theme]\n', raw)
@@ -657,8 +903,10 @@ def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3
     raw = re.sub('(?im)^\\s*[#*\\-\\s]*Overall\\s+Soundscape\\s*(?:[:\\-]+\\s*|\\s*$)', '[Overall Soundscape]\n', raw)
     raw = re.sub('(?i)\\[\\s*Non-Diegetic\\s+Music[^\\]\\n]*\\][\\s:*#\\-]*', '\n[Non-Diegetic Music]\n', raw)
     raw = re.sub('(?im)^\\s*[#*\\-\\s]*Non-Diegetic\\s+Music\\s*(?:[:\\-]+\\s*|\\s*$)', '[Non-Diegetic Music]\n', raw)
-    raw = re.sub('(?i)following\\s+a\\s+(?:sudden\\s+cinematic\\s+smash|secondary\\s+rapid\\s+cinematic)\\s+cut\\s*,?', 'continuing seamlessly in the exact same continuous shot and camera distance,', raw)
-    raw = re.sub('(?i)\\b(?:smash\\s+cut|rapid\\s+cut|jump\\s+cut|hard\\s+cut|cuts?\\s+to)\\b', 'smoothly transitions within the same continuous camera framing', raw)
+    if not is_multi_cut_06:
+        raw = re.sub(r'(?i)\[\s*(?:SCENE[\s_-]*CUT|HARD[\s_-]*CUT|SMASH[\s_-]*CUT)\s*\]\s*', '', raw)
+        raw = re.sub('(?i)following\\s+a\\s+(?:sudden\\s+cinematic\\s+smash|secondary\\s+rapid\\s+cinematic)\\s+cut\\s*,?', 'continuing seamlessly in the exact same continuous shot and camera distance,', raw)
+        raw = re.sub('(?i)\\b(?:smash\\s+cut|rapid\\s+cut|jump\\s+cut|hard\\s+cut|cuts?\\s+to)\\b', 'smoothly transitions within the same continuous camera framing', raw)
     if not allow_camera_movement:
         raw = re.sub('(?i)\\blow-angle\\s+cutaway\\s+shot\\s+of\\s+(?:her|his|the)\\s+(?:feet|boots)\\b', 'steady camera framing keeping the subject centered in frame', raw)
     if not is_ref2va:
@@ -679,7 +927,7 @@ def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3
             master_theme = master_theme[:420].rsplit('.', 1)[0].strip() + '.'
     is_speech_perf = bool(re.search(r'(?i)\b(?:spoken\s+dialogue|spoken\s+voice|speaks\s+expressively|syllable[-\s]?accurate\s+lip[-\s]?sync|interview(?:ing|s|ed)?|late-night\s+television\s+news\s+anchor|teleprompter)\b', raw))
     is_vocal_perf = bool(is_vocal_override) or is_speech_perf or bool(re.search(r'(?i)\b(?:suno\s+rhythmic|32khz\s+vocal\s+waveform|phoneme[-\s]?accurate\s+lip[-\s]?sync|studio\s+lead\s+vocals|expressive\s+singing|singing\s+expressively|singing\s+naturally|vocal\s+envelope|open-mouth\s+lip-sync)\b', raw))
-    is_indoor_06 = bool(
+    is_indoor_06 = is_locked_stage_06 and bool(
         re.search(r'(?i)\b(?:studio|news\s+desk|broadcast|indoor|indoors|interior|room|office|tavern|bar|cockpit|interview(?:ing)?|anchor|teleprompter|desk)\b', raw)
     ) and not bool(re.search(r'(?i)\b(?:wind|windy|breeze|storm|gale|blizzard)\b', str(user_scene_input or '')))
     combined_06_txt = raw + ' ' + str(user_scene_input or '')
@@ -688,7 +936,7 @@ def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3
     has_bg_extras_06 = bool(subj_tags_06 and main_subj_tags_06) or bool(re.search(r'(?i)\b(?:statister|background\s+extras|bar/tavern\s+patrons|city\s+pedestrians|brawling\s+combatants|studio\s+audience|group\s+participants)\b', combined_06_txt))
     has_dual_subj_06 = (max(main_subj_tags_06) >= 2 if main_subj_tags_06 else (max(subj_tags_06) >= 2 if subj_tags_06 else False)) or bool(
         re.search(
-            r'(?i)(?:<\s*(?:main[_\s-]*)?subject\s*2\s*>|\bgoblin\b|\binterview(?:ing|s|ed)?\b|\bco-?anchor\b|\bsenator\b|\btwo[-\s]?shot\b|\btwo\s+characters\b|\bthree\s+characters\b|\bbeside\s+her\b|\bacross\s+from\s+her\b|\b(?:brawl|fistfight|duel(?:ing)?|fighting|sparring|making\s+love|lovemaking|passionate\s+kiss(?:ing)?|lovers|couple|threesome|foursome|orgy|harem|slagsmål|älskog|trekant|orgie)\b)',
+            r'(?i)(?:<\s*(?:main[_\s-]*)?subject\s*2\s*>|\binterview(?:ing|s|ed)?\b|\bco-?anchor\b|\btwo[-\s]?shot\b|\btwo\s+(?:characters|people|women|men|lovers)\b|\bthree\s+(?:characters|people)\b|\btvå\s+(?:personer|karaktärer|kvinnor|män)\b|\bbeside\s+(?:her|him)\b|\bacross\s+from\s+(?:her|him)\b|\b(?:brawl|fistfight|duel(?:ing)?|sparring|making\s+love|lovemaking|passionate\s+kiss(?:ing)?|lovers|couple|threesome|foursome|orgy|harem|slagsmål|älskog|samlag|trekant|orgie)\b)',
             combined_06_txt,
         )
     )
@@ -703,11 +951,12 @@ def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3
             ref_subj_lbl = 'both foreground characters (<Main_Subject 1> on the left and <Main_Subject 2> on the right)'
     vocal_action_gerund = 'speaking the dialogue with syllable-accurate open-mouth lip-sync and active lower-jaw articulation' if is_speech_perf else 'singing the lead vocals with natural lip-sync articulation'
     if is_vocal_perf:
-        raw = re.sub(
-            r'(?i)\b(?:turns?\s+around(?:\s+and\s+walks?\s+away)?|turning\s+around|spins?\s+around|spinning\s+around|twirls?(?:\s+around)?|twirling|pirouettes?|360[-\s]?degree|leaps?\s+(?:high\s+)?(?:into\s+the\s+air|up|forward)|leaping\s+(?:into\s+the\s+air|up)|jumps?\s+(?:high\s+)?(?:into\s+the\s+air|up)|jumping\s+(?:into\s+the\s+air|up)|swings?\s+(?:her|his|their|the)\s+(?:heavy\s+|battle\s+)?(?:axe|sword|weapon|hammer)|walks?\s+away(?:\s+from\s+(?:the\s+)?camera)?|walking\s+away(?:\s+from\s+(?:the\s+)?camera)?|with\s+(?:her|his|their)\s+back\s+(?:turned|to\s+the\s+camera)|from\s+behind|rear[-\s]?view|back\s+of\s+(?:her|his|their)\s+head)\b',
-            f'remaining strictly facing the camera lens in the exact constant shot distance of {ref_pic_lbl}',
-            raw,
-        )
+        if is_locked_stage_06:
+            raw = re.sub(
+                r'(?i)\b(?:turns?\s+around(?:\s+and\s+walks?\s+away)?|turning\s+around|spins?\s+around|spinning\s+around|twirls?(?:\s+around)?|twirling|pirouettes?|360[-\s]?degree|leaps?\s+(?:high\s+)?(?:into\s+the\s+air|up|forward)|leaping\s+(?:into\s+the\s+air|up)|jumps?\s+(?:high\s+)?(?:into\s+the\s+air|up)|jumping\s+(?:into\s+the\s+air|up)|swings?\s+(?:her|his|their|the)\s+(?:heavy\s+|battle\s+)?(?:axe|sword|weapon|hammer)|walks?\s+away(?:\s+from\s+(?:the\s+)?camera)?|walking\s+away(?:\s+from\s+(?:the\s+)?camera)?|with\s+(?:her|his|their)\s+back\s+(?:turned|to\s+the\s+camera)|from\s+behind|rear[-\s]?view|back\s+of\s+(?:her|his|their)\s+head)\b',
+                f'remaining strictly facing the camera lens in the exact constant shot distance of {ref_pic_lbl}',
+                raw,
+            )
         raw = re.sub(
             r'(?i)(?:None\.\s*Purely\s+diegetic\s+environmental\s+ambience[^.\n]*\.|strictly\s+no\s+singing,?\s*no\s+vocals[^.\n]*\.)',
             f'Continuous spoken dialogue and expressive vocal articulation synchronized frame-for-frame with {ref_subj_lbl} from 0.0s.' if is_speech_perf else f'Continuous studio lead vocals and expressive singing synchronized frame-for-frame with {ref_subj_lbl} from 0.0s.',
@@ -754,25 +1003,41 @@ def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3
             if is_indoor_06:
                 tail_ctx = re.sub(r'(?i)\bcrunching\s+snow(?:\s+underfoot)?,?\s*', 'quiet room ambience, ', tail_ctx)
             tail_ctx = re.sub(r'(?i);?\s*(?:strictly\s+)?(?:zero|no)\s+(?:spoken\s+dialogue|human\s+voice|voiceover|narration|singing|background\s+music|instrumental\s+score|music|vocals)[^.\n]*\.?', '', tail_ctx).strip()
-    is_fem_subj = bool(re.search(r'(?i)\b(?:she|her|female|woman|girl|queen|goddess|heroine|priestess)\b', raw))
-    has_orc_tusk = bool(re.search(r'(?i)\b(?:orc|half[-\s]?orc|tusks?|boar[-\s]?headed|minotaur|ogre|troll|dragon)\b', raw))
+    dir_auth_06 = _build_director_preset_and_species_authority(
+        timeline_prompt=raw,
+        user_scene_input=user_scene_input,
+        subject_stance_posture=subject_stance_posture,
+        allow_camera_movement=allow_camera_movement,
+    )
+    is_non_human_06 = bool(dir_auth_06['is_non_human'])
+    is_fem_subj = (not is_non_human_06) and bool(re.search(r'(?i)\b(?:she|her|female|woman|girl|queen|goddess|heroine|priestess|kvinna|hon|hennes|tjej|flicka)\b', combined_06_txt))
+    is_male_subj = (not is_non_human_06) and (not is_fem_subj) and bool(re.search(r'(?i)\b(?:he|him|his|male|man|boy|king|prince|gentleman|han|honom|hans|manlig|kille)\b', combined_06_txt))
+    subj_poss = 'her' if is_fem_subj else ('his' if is_male_subj else 'their')
+    has_orc_tusk = (not is_non_human_06) and bool(re.search(r'(?i)\b(?:orc|half[-\s]?orc|tusks?|boar[-\s]?headed|minotaur|ogre|troll|dragon)\b', raw))
     m_age_06 = re.search(r'(?i)\b(\d{1,2}-year-old|ageless-cyborg)\b', raw)
     active_age_06 = m_age_06.group(1) if m_age_06 else '25-year-old'
     m_num_06 = re.search(r'(\d{1,2})', active_age_06)
     age_num_06 = int(m_num_06.group(1)) if m_num_06 else 25
-    skin_age_adj = 'youthful baby-smooth unwrinkled' if age_num_06 <= 20 else ('gorgeous smooth unwrinkled' if age_num_06 <= 29 else ('poised mature' if age_num_06 <= 37 else 'seasoned mature'))
+    skin_age_adj = 'youthful smooth' if age_num_06 <= 20 else ('smooth' if age_num_06 <= 29 else ('poised mature' if age_num_06 <= 37 else 'seasoned mature'))
+    gender_face_noun = 'feminine face' if is_fem_subj else ('masculine face' if is_male_subj else 'facial structure')
     face_desc_tag = (
-        f'{skin_age_adj} {active_age_06} facial structure and protruding lower-jaw tusks'
-        if has_orc_tusk else
-        f'{skin_age_adj} {active_age_06} feminine face'
+        (dir_auth_06['species_lock_phrase'] or 'exact biological species morphology and natural surface texture')
+        if is_non_human_06 else (
+            f'{skin_age_adj} {active_age_06} facial structure and protruding lower-jaw tusks'
+            if has_orc_tusk else
+            f'{skin_age_adj} {active_age_06} {gender_face_noun}'
+        )
     )
     cam_lock_clause = '' if allow_camera_movement else ' at a constant camera distance'
-    if has_dual_subj_06:
-        fem_face_lock = f' Preserve the distinct individual facial identities, species, skin tones, and outfits of both foreground characters from Frame 0{cam_lock_clause} without merging or cloning faces.'
-    elif is_fem_subj and has_orc_tusk:
-        fem_face_lock = f' Preserve her single unified {skin_age_adj} {active_age_06} facial structure, skin tone, and protruding tusks from Frame 0{cam_lock_clause}.'
-    elif is_fem_subj:
-        fem_face_lock = f' Preserve her single unified {skin_age_adj} {active_age_06} feminine facial structure and proportions from Frame 0{cam_lock_clause}.'
+    if is_non_human_06:
+        sp_lbl_06 = dir_auth_06['matched_species'] or 'subject'
+        fem_face_lock = f' Preserve the exact {sp_lbl_06} species anatomy, head/body morphology, natural coat/surface texture, and proportions from Frame 0{cam_lock_clause} without species mutation.'
+    elif has_dual_subj_06:
+        fem_face_lock = f' Preserve the distinct individual facial identities, species, skin tones, and anatomical proportions of all foreground characters from Frame 0{cam_lock_clause} without merging or cloning faces.'
+    elif has_orc_tusk:
+        fem_face_lock = f' Preserve {subj_poss} single unified {skin_age_adj} {active_age_06} facial structure, skin tone, and protruding tusks from Frame 0{cam_lock_clause}.'
+    elif is_fem_subj or is_male_subj:
+        fem_face_lock = f' Preserve {subj_poss} single unified {skin_age_adj} {active_age_06} {gender_face_noun} and proportions from Frame 0{cam_lock_clause}.'
     else:
         fem_face_lock = ''
     if has_dual_subj_06 and has_bg_extras_06:
@@ -786,30 +1051,50 @@ def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3
     bg_env_label = 'indoor background environment' if is_indoor_06 else 'background environment'
     wants_dynamic_vertical_choreo_06 = bool(
         re.search(
-            r'(?i)\b(?:squats?|squatting|kneels?|kneeling|crouches?|crouching|bends?|bending|dance|dancing|dances|jumps?|jumping|bounces?|bouncing|twirls?|hips?\s+sway(?:ing)?|på\s+huk|hukar|hukande|knäböj(?:er|ande)?|på\s+knä|böjer|dansar|hoppar|snurrar|sitt(?:er|ande)|ligg(?:er|ande))\b',
+            r'(?i)\b(?:squats?|squatting|kneels?|kneeling|crouches?|crouching|bends?|bending|dance|dancing|dances|jumps?|jumping|bounces?|bouncing|twirls?|hips?\s+sway(?:ing)?|thrust(?:s|ing)?|rid(?:es?|ing)|på\s+huk|hukar|hukande|knäböj(?:er|ande)?|på\s+knä|böjer|dansar|hoppar|snurrar|sitt(?:er|ande)|ligg(?:er|ande))\b',
             combined_06_txt,
         )
     )
-    wants_garment_dynamics_06 = bool(re.search(r'(?i)\b(?:slip(?:s|ping)?|shift(?:s|ing)?|part(?:s|ing)?|lift(?:s|ing)?|pull(?:s|ing)?\s+(?:up|down|aside)|reveal(?:s|ing)?|peek(?:s|ing)?)\b', combined_06_txt))
-    outfit_lock_tag = 'outfit design and fabric colors' if wants_garment_dynamics_06 else 'outfit geometry'
-    id_lock_phrase = f'keeping both characters\' distinct facial identities, species anatomy, and {outfit_lock_tag}' if has_dual_subj_06 else f'keeping her exact facial identity, {face_desc_tag}, hair color and style, and {outfit_lock_tag}'
-    if allow_camera_movement:
+    stance_low_early_06 = str(subject_stance_posture or '').strip().lower()
+    wants_undress_or_erotic_06 = stance_low_early_06.startswith('nsfw_') or (tier_low_extract == 'nsfw_explicit') or bool(_DIRECTOR_EROTIC_REGEX.search(combined_06_txt)) or bool(re.search(r'(?i)\b(?:remove(?:s|d)?|removing|takes?\s+off|taking\s+off|unbutton(?:s|ing)?|unzip(?:s|ping)?|drop(?:s|ping)?\s+(?:her|his|their)|klär\s+av|tar\s+av)\b', combined_06_txt))
+    wants_garment_dynamics_06 = wants_undress_or_erotic_06 or bool(re.search(r'(?i)\b(?:slip(?:s|ping)?|shift(?:s|ing)?|part(?:s|ing)?|lift(?:s|ing)?|pull(?:s|ing)?\s+(?:up|down|aside)|reveal(?:s|ing)?|peek(?:s|ing)?)\b', combined_06_txt))
+    outfit_lock_tag = 'anatomical proportions and skin continuity' if wants_undress_or_erotic_06 else ('outfit design and fabric colors' if wants_garment_dynamics_06 else 'outfit continuity')
+    if is_non_human_06:
+        id_lock_phrase = f'keeping {face_desc_tag}'
+    elif has_dual_subj_06:
+        id_lock_phrase = f'keeping both characters\' distinct facial identities, species anatomy, and {outfit_lock_tag}'
+    else:
+        id_lock_phrase = f'keeping {subj_poss} exact facial identity, {face_desc_tag}, hair color and style, and {outfit_lock_tag}'
+    if is_multi_cut_06:
         continuity_lock_footer = (
-            f'\n[Continuity, Intentional Camera Trajectory, Front-Facing, Anatomy & Lip-Sync Lock]\nContinuous single-take cinema camera following the requested camera movement smoothly. {subj_count_lock} facing the camera lens with natural open-mouth lip-sync and jaw articulation.{fem_face_lock} Keep character anatomy, head-to-body scale, skin tone, color grading, and {bg_env_label} locked to {ref_pic_lbl}.'
+            f'\n[Continuity, Multi-Scene Editorial Cuts, Subject Identity & Lip-Sync Lock]\nCinema-grade multi-scene storytelling executing intentional camera and environment cuts cleanly between acts while keeping {ref_subj_lbl} {id_lock_phrase} consistent with {ref_pic_lbl} and synchronized with expressive vocal lip-sync.{fem_face_lock}'
             if is_vocal_perf else
-            f'\n[Continuity, Intentional Camera Trajectory, Facial Identity & Proportion Lock]\nContinuous single-take cinema camera executing the requested camera movement smoothly. {subj_count_lock} {id_lock_phrase} consistent with {ref_pic_lbl} throughout every second.{fem_face_lock}'
+            f'\n[Continuity, Multi-Scene Editorial Cuts, Subject Identity & Morphology Lock]\nCinema-grade multi-scene storytelling executing intentional camera and environment cuts cleanly between acts. {subj_count_lock} {id_lock_phrase} consistent with {ref_pic_lbl} across every scene transition.{fem_face_lock}'
+        )
+    elif is_one_shot_06:
+        continuity_lock_footer = (
+            f'\n[Continuity, Continuous One-Shot Journey, Subject Identity & Lip-Sync Lock]\nContinuous unbroken single-take tracking camera following {ref_subj_lbl} seamlessly through the evolving spatial journey without hard cuts while performing natural open-mouth lip-sync.{fem_face_lock} Keep {id_lock_phrase} consistent with {ref_pic_lbl}.'
+            if is_vocal_perf else
+            f'\n[Continuity, Continuous One-Shot Journey, Subject Identity & Proportion Lock]\nContinuous unbroken single-take tracking camera following {ref_subj_lbl} seamlessly through the evolving spatial journey without hard cuts. {subj_count_lock} {id_lock_phrase} consistent with {ref_pic_lbl} throughout every second.{fem_face_lock}'
+        )
+    elif allow_camera_movement:
+        continuity_lock_footer = (
+            f'\n[Continuity, Intentional Camera Trajectory, Front-Facing, Anatomy & Lip-Sync Lock]\nContinuous single-take cinema camera following the requested camera movement smoothly. {subj_count_lock} facing the camera lens with natural open-mouth lip-sync and jaw articulation.{fem_face_lock} Keep subject anatomy, head-to-body scale, surface tone, color grading, and {bg_env_label} locked to {ref_pic_lbl}.'
+            if is_vocal_perf else
+            f'\n[Continuity, Intentional Camera Trajectory, Subject Identity & Proportion Lock]\nContinuous single-take cinema camera executing the requested camera movement smoothly. {subj_count_lock} {id_lock_phrase} consistent with {ref_pic_lbl} throughout every second.{fem_face_lock}'
         )
     else:
+        dyn_surface_lbl = 'natural surface dynamics' if is_non_human_06 else 'natural garment dynamics'
         posture_scale_clause = (
-            f'at the exact constant camera distance of {ref_pic_lbl} while executing the prompted full-body choreography, vertical posture transitions, and natural garment dynamics'
+            f'at the exact constant camera distance of {ref_pic_lbl} while executing the prompted full-body choreography, vertical posture transitions, and {dyn_surface_lbl}'
             if (wants_dynamic_vertical_choreo_06 or wants_garment_dynamics_06) else
             f'at the exact camera distance and vertical proportions of {ref_pic_lbl}'
         )
-        outfit_footer_clause = 'outfit design and fabric colors' if wants_garment_dynamics_06 else 'outfit proportions'
+        outfit_footer_clause = 'natural coat and surface details' if is_non_human_06 else ('outfit design and fabric colors' if wants_garment_dynamics_06 else 'outfit proportions')
         continuity_lock_footer = (
-            f'\n[Continuity, Constant Camera Distance, Full-Posture Scale & Lip-Sync Lock]\nStatic locked-off camera on a heavy tripod maintaining the exact constant camera distance and lens focal length of {ref_pic_lbl} from start to finish. {subj_count_lock} {posture_scale_clause} performing natural open-mouth vocal lip-sync, active lower-jaw articulation, and expressive body performance.{fem_face_lock} Keep character anatomy, {outfit_footer_clause}, head-to-body scale, skin tone, and {bg_env_label} locked to {ref_pic_lbl}.'
+            f'\n[Continuity, Constant Camera Distance, Full-Posture Scale & Lip-Sync Lock]\nStatic locked-off camera on a heavy tripod maintaining the exact constant camera distance and lens focal length of {ref_pic_lbl} from start to finish. {subj_count_lock} {posture_scale_clause} performing natural open-mouth vocal lip-sync, active lower-jaw articulation, and expressive body performance.{fem_face_lock} Keep subject anatomy, {outfit_footer_clause}, head-to-body scale, surface tone, and {bg_env_label} locked to {ref_pic_lbl}.'
             if is_vocal_perf else
-            f'\n[Continuity, Constant Camera Distance, Facial Identity & Proportion Lock]\nStatic locked-off camera on a heavy tripod maintaining the exact constant camera distance and lens focal length of {ref_pic_lbl} from start to finish. {subj_count_lock} {id_lock_phrase} {posture_scale_clause} throughout every second.{fem_face_lock}'
+            f'\n[Continuity, Constant Camera Distance, Subject Identity & Proportion Lock]\nStatic locked-off camera on a heavy tripod maintaining the exact constant camera distance and lens focal length of {ref_pic_lbl} from start to finish. {subj_count_lock} {id_lock_phrase} {posture_scale_clause} throughout every second.{fem_face_lock}'
         )
     tail_ctx = f'{tail_ctx}\n{continuity_lock_footer}'.strip() if tail_ctx else continuity_lock_footer.strip()
     shot_matches = list(re.finditer('\\[Shot\\s*\\d+[^\\]]*\\]', narrative_body, flags=re.IGNORECASE))
@@ -821,7 +1106,17 @@ def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3
             body = re.sub('\\s+', ' ', narrative_body[start_pos:end_pos]).strip()
             if body:
                 raw_bodies.append(body)
-    if len(raw_bodies) < 2:
+    narrative_beats_06 = _split_general_narrative_beats(user_scene_input or narrative_body, target_wins, eff_cont_mode) if (is_one_shot_06 or is_multi_cut_06) else []
+    if len(raw_bodies) < 2 and len(narrative_beats_06) >= 2:
+        raw_bodies = []
+        for b_info in narrative_beats_06:
+            b_txt_item = str(b_info.get('text', '') or '').strip()
+            if not is_ref2va:
+                b_txt_item = re.sub(r'(?i)<Subject\s*1>', 'the primary subject', b_txt_item)
+            if is_multi_cut_06 and bool(b_info.get('is_scene_cut', False)):
+                b_txt_item = f'[SCENE CUT] {b_txt_item}'
+            raw_bodies.append(b_txt_item)
+    elif len(raw_bodies) < 2:
         clean_narr = re.sub('(?im)^\\s*BLOCK\\s*\\d+\\s*$', '', narrative_body).strip()
         clean_narr = re.sub('\\[Master Scene & Visual Theme\\]', '', clean_narr, flags=re.IGNORECASE).strip()
         paras = [p.strip() for p in re.split(r'\n\s*\n', clean_narr) if p.strip()]
@@ -860,9 +1155,9 @@ def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3
     if raw_bodies:
         if len(raw_bodies) >= 2:
             while len(raw_bodies) < target_wins:
-                prev_b = raw_bodies[-1]
+                prev_b = re.sub(r'(?i)^\s*\[\s*SCENE[\s_-]*CUT\s*\]\s*', '', raw_bodies[-1]).strip()
                 next_win_num = len(raw_bodies) + 1
-                raw_bodies.append(f'Continuing seamlessly from the final frame of Shot {next_win_num - 1} in the exact same camera framing and posture, {prev_b}')
+                raw_bodies.append(f'Continuing seamlessly from the final frame of Shot {next_win_num - 1}, {prev_b}')
             if len(raw_bodies) > target_wins:
                 merged_bodies = []
                 for w_i in range(target_wins):
@@ -875,55 +1170,67 @@ def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3
         else:
             primary_shot_body = raw_bodies[0]
             raw_bodies = [primary_shot_body for _ in range(target_wins)]
+    if is_multi_cut_06 and len(raw_bodies) >= 2 and len(narrative_beats_06) == len(raw_bodies):
+        if not any(re.search(r'(?i)\[\s*(?:SCENE[\s_-]*CUT|HARD[\s_-]*CUT|SMASH[\s_-]*CUT)\s*\]|\beditorial\s+scene\s+cut\b', b_s) for b_s in raw_bodies[1:]):
+            for b_i, b_info in enumerate(narrative_beats_06):
+                if b_i >= 1 and bool(b_info.get('is_scene_cut', False)):
+                    raw_bodies[b_i] = f"[SCENE CUT] {raw_bodies[b_i].lstrip()}"
     concise_id_theme = master_theme.strip()
 
     dolly_drift_pat = r'(?i)\b(?:steady\s+85mm\s+portrait\s+lens(?:\s+at\s+f/1\.4)?\s+slowly\s+drifting\s+in\s+a\s+dolly-in\s+motion|slowly\s+drifting\s+in\s+a\s+dolly-in\s+motion|dolly-in\s+motion|dolly-in|push-in|zoom-in|zooming\s+in|zooms?\s+in|anamorphic\s+push-in|85mm\s+portrait\s+lens(?:\s+at\s+f/1\.4)?|85mm\s+medium\s+close-up\s+portrait\s+framing|waist-up\s+medium\s+portrait\s+camera|extreme\s+macro\s+close-up|extreme\s+close-up|tight\s+close-up(?:\s+portrait)?|macro\s+close-up|medium\s+close-up\s+portrait|close-up\s+portrait(?:\s+framing)?|close-up\s+on\s+(?:<subject\s*1>|her|his|the)\s+(?:face|lips|mouth|eyes)|camera\s+(?:pushes|moves|glides|drifts)\s+(?:closer|in|toward))\b'
     if not allow_camera_movement:
-        master_theme = _scrub_unrequested_genital_hallucinations(re.sub(dolly_drift_pat, f'steady locked-off camera at the exact constant shot distance of {ref_pic_lbl}', master_theme), user_scene_input)
-        concise_id_theme = _scrub_unrequested_genital_hallucinations(re.sub(dolly_drift_pat, f'steady locked-off camera at the exact constant shot distance of {ref_pic_lbl}', concise_id_theme), user_scene_input)
-    else:
-        master_theme = _scrub_unrequested_genital_hallucinations(master_theme, user_scene_input)
-        concise_id_theme = _scrub_unrequested_genital_hallucinations(concise_id_theme, user_scene_input)
+        master_theme = re.sub(dolly_drift_pat, f'steady locked-off camera at the exact constant shot distance of {ref_pic_lbl}', master_theme)
+        concise_id_theme = re.sub(dolly_drift_pat, f'steady locked-off camera at the exact constant shot distance of {ref_pic_lbl}', concise_id_theme)
+    if tier_low_extract == 'sfw':
+        master_theme = _scrub_unrequested_genital_hallucinations(master_theme, '')
+        concise_id_theme = _scrub_unrequested_genital_hallucinations(concise_id_theme, '')
     if is_vocal_perf:
         lip_rep_phrase = 'expressive parted lips and active jaw articulation speaking the dialogue with natural lip-sync' if is_speech_perf else 'expressive parted lips singing the lead vocals with natural lip-sync articulation'
         master_theme = re.sub(r'(?i)\b(?:a\s+)?(?:firmly\s+|tightly\s+)?closed\s+(?:mouth|lips)(?:\s+and\s+a\s+(?:fierce|serene)\s+silent\s+expression)?\b', lip_rep_phrase, master_theme)
         concise_id_theme = re.sub(r'(?i)\b(?:a\s+)?(?:firmly\s+|tightly\s+)?closed\s+(?:mouth|lips)(?:\s+and\s+a\s+(?:fierce|serene)\s+silent\s+expression)?\b', lip_rep_phrase, concise_id_theme)
 
     stance_low_06 = str(subject_stance_posture or '').strip().lower()
-    has_explicit_stance_06 = not stance_low_06.startswith(('auto', ''))
+    has_explicit_stance_06 = bool(stance_low_06) and not stance_low_06.startswith('auto')
     wants_kneeling_06 = stance_low_06.startswith('kneeling_crouching') or bool(
         re.search(r'(?i)\b(?:staged\s+kneeling\s+or\s+crouching|kneels?|kneeling|crouches?|crouching|squats?|squatting|på\s+huk|hukar|hukande|knäböj(?:er|ande)?|på\s+knä)\b', combined_06_txt)
     )
 
     def _sanitize_upright_eye_level_action(txt_in: str, shot_idx: int = 0) -> str:
-        s = _scrub_unrequested_genital_hallucinations(txt_in, user_scene_input)
+        s = _scrub_unrequested_genital_hallucinations(txt_in, '') if tier_low_extract == 'sfw' else str(txt_in or '')
+        preserve_cut_marker = bool(is_multi_cut_06 and shot_idx >= 1 and re.search(r'(?i)(?:\[\s*(?:SCENE[\s_-]*CUT|HARD[\s_-]*CUT|SMASH[\s_-]*CUT)\s*\]|\beditorial\s+scene\s+cut\b|\bsmash\s+cut\s+to\b|\bmatch\s+cut\s+to\b|\bhard\s+cut\s+to\b|\bcuts?\s+to\b)', s))
+        s = re.sub(r'(?i)\[\s*(?:SCENE[\s_-]*CUT|HARD[\s_-]*CUT|SMASH[\s_-]*CUT)\s*\]\s*', '', s)
         s = re.sub(r'(?<=[a-z])\s+(Locked\s+to\s+)', r'. \1', s)
         s = re.sub(r'(?i)\s*Locked\s+to\s+[^.]*\baesthetic(?:\s*\([^)]*\))?\.\s*', ' ', s)
         s = re.sub(r'(?i)\s*<Subject\s*1>\s+preserves\s+[^.]*\bzero\s+(?:hard\s+)?scene\s+cuts\.\s*', ' ', s)
         s = re.sub(r'(?i)\bFrom\s+the\s+first\s+frame\s+of\s+Shot\s+\d+,?\s*', '', s)
-        s = re.sub(r'(?i)\bContinuing\s+seamlessly\s+from\s+the\s+final\s+frame\s+of\s+Shot\s+\d+\s*\([^)]*\),?\s*', 'Continuing seamlessly in one unbroken take, ', s)
+        s = re.sub(r'(?i)\bContinuing\s+seamlessly\s+from\s+the\s+final\s+frame\s+of\s+Shot\s+\d+(?:\s*\([^.\n]*?\))*,?\s*', '' if preserve_cut_marker else 'Continuing seamlessly in one unbroken take, ', s)
+        s = re.sub(r'(?:\)\s*,\s*(?:<Subject\s*1>|the\s+primary\s+subject)\s*)+', ', ', s, flags=re.IGNORECASE)
+        s = re.sub(r'[()]', '', s)
         s = re.sub(r'(?i)\bMaintaining\s+the\s+exact\s+[^,]+,\s*lighting,\s*and\s+original\s+style\s+of\s+Shot\s+\d+\s+with\s+zero\s+hard\s+cuts,?\s*', '', s)
-        if shot_idx > 0 or wants_dynamic_vertical_choreo_06 or wants_garment_dynamics_06:
+        if shot_idx > 0 or wants_dynamic_vertical_choreo_06 or wants_garment_dynamics_06 or not is_locked_stage_06:
             s = re.sub(r'(?i)\bHer\s+left\s+hand\s+gently\s+touches\s+her\s+temple\s+while\s+her\s+right\s+arm\s+rests\s+near\s+her\s+hip,?\s*(?:posture\s+poised\s+and\s+slightly\s+coy)?[.,;]?\s*', '', s)
-            s = re.sub(r'(?i)<Subject\s*1>\s+maintains\s+her\s+exact\s+initial\s+stance,?\s*clothing,?\s*and\s+framing[^.]*\.\s*', '', s)
+            s = re.sub(r'(?i)<Subject\s*1>\s+maintains\s+(?:her|his|their)\s+exact\s+initial\s+stance,?\s*clothing,?\s*and\s+framing[^.]*\.\s*', '', s)
         s = re.sub(r'(?i)\s*aligned\s+to\s+acoustic\s+vocal\s+envelope\s*\[[^\]]*\]', '', s)
         s = re.sub(r'(?i)\s*\[(?:\d+(?:\.\d+)?s-\d+(?:\.\d+)?s:[A-Z_]+(?:,\s*)?)+\]', '', s)
         s = re.sub(r'(?i)\bAct\s*\d+\s*\(\d+(?:\.\d+)?s\s*-\s*\d+(?:\.\d+)?s[^)]*\)\s*:\s*', '', s)
         s = re.sub(r'(?i)\b(?:at|from|after|until|up\s+to|around)\s+(?:\d+(?:\.\d+)?\s*(?:s|sec|seconds?)|event_[12])\s*(?:to\s+\d+(?:\.\d+)?\s*(?:s|sec|seconds?))?\s*,?\s*', '', s)
-        s = re.sub(r'(?i)\b(?:sudden\s+cinematic\s+smash\s+cut|secondary\s+rapid\s+cinematic\s+cut|smash\s+cut|jump\s+cut|scene\s+cut|cut\s+transition|cuts?\s+to|switches?\s+to)\b', 'continuous unbroken single-take motion', s)
+        if not is_multi_cut_06:
+            s = re.sub(r'(?i)\b(?:sudden\s+cinematic\s+smash\s+cut|secondary\s+rapid\s+cinematic\s+cut|smash\s+cut|jump\s+cut|scene\s+cut|cut\s+transition|cuts?\s+to|switches?\s+to)\b', 'continuous unbroken single-take motion', s)
         s = re.sub(r'(?i)\b(?:authentic|visible)\s+(?:human\s+)?skin\s+pores,?\s*', 'authentic epidermal micro-texture, ', s)
         if is_indoor_06:
             s = re.sub(
                 r'(?i)\b(?:wind[-\s]?swept\s+hair(?:\s+motion|\s+movement)?|hair\s+blowing\s+in\s+the\s+wind|blowing\s+in\s+the\s+(?:cold\s+|icy\s+)?wind|fluid\s+hair\s+motion\s+in\s+the\s+wind|in\s+the\s+howling\s+wind|cold\s+wind\s+gusts|howling\s+wind\s+gusts)\b',
-                'settled indoor hair in calm studio air',
+                'calm indoor air' if is_non_human_06 else 'settled indoor hair in calm studio air',
                 s,
             )
         if not allow_camera_movement:
             s = re.sub(dolly_drift_pat, f'steady locked-off camera at the exact constant shot distance of {ref_pic_lbl}', s)
-        if has_explicit_stance_06 and stance_low_06.startswith('kneeling_crouching') and shot_idx > 0:
+        if has_explicit_stance_06 and dir_auth_06.get('stance_conflict_pat') and dir_auth_06.get('stance_conflict_repl') and (shot_idx > 0 or stance_low_06.startswith('standing_upright')):
+            s = re.sub(dir_auth_06['stance_conflict_pat'], dir_auth_06['stance_conflict_repl'], s)
+        elif wants_kneeling_06 and shot_idx > 0:
             s = re.sub(
-                r'(?i)\b(?:standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance(?:\s+with\s+one\s+leg\s+raised)?|stands?\s+tall\s+and\s+upright|maintains?\s+her\s+grounded\s+stance|staying\s+upright(?:\s+in\s+frame)?)\b',
-                'kneeling low on her knees in a grounded crouching posture on the ground',
+                r'(?i)\b(?:standing\s+in\s+a\s+wide(?:\s*,\s*grounded)?\s+combat\s+stance(?:\s+with\s+one\s+leg\s+raised)?|stands?\s+tall\s+and\s+upright|maintains?\s+(?:her|his|their)\s+grounded\s+stance|staying\s+upright(?:\s+in\s+frame)?)\b',
+                'kneeling low on their knees in a grounded crouching posture on the ground',
                 s,
             )
         if is_vocal_perf:
@@ -932,19 +1239,49 @@ def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3
             s = re.sub(r'(?i)\b(?:in\s+silent\s+reverence|fierce\s+silent\s+expression|serene\s+silent\s+expression|silent\s+expression|without\s+speaking\s+or\s+singing)\b', lip_rep_s, s)
         else:
             s = re.sub(r'(?i);?\s*(?:strictly\s+)?(?:zero|no)\s+(?:spoken\s+dialogue|human\s+voice|voiceover|narration|singing|background\s+music|instrumental\s+score|music|vocals)[^.\n]*\.?', '', s)
+        s = re.sub(r',\s*(?:the|a|an|in|into|out|to|of|and|with|at|on|from)\s*([.!?])', r'\1', s, flags=re.IGNORECASE)
         s = re.sub(r'\s{2,}', ' ', s).strip()
         if s and s[-1] not in '.!?':
             s = s.rstrip(',;:- ') + '.'
+        if preserve_cut_marker:
+            s = f'[SCENE CUT] {s}'
         return s
 
     acts = []
-    hair_motion_clause = 'settled indoor hair' if is_indoor_06 else 'natural hair movement'
-    lead_id_clause = 'both characters\' distinct facial identities and proportions' if has_dual_subj_06 else f'her {face_desc_tag} and anatomical proportions'
-    posture_lock_clause = 'character anatomy' if (has_explicit_stance_06 or wants_dynamic_vertical_choreo_06 or wants_garment_dynamics_06) else 'posture framing'
+    hair_motion_clause = 'natural organic surface and limb motion' if is_non_human_06 else ('settled indoor hair' if is_indoor_06 else 'natural hair movement')
+    lead_id_clause = (
+        f"the exact {dir_auth_06['matched_species'] or 'subject'} species morphology and proportions"
+        if is_non_human_06 else (
+            'both characters\' distinct facial identities and proportions'
+            if has_dual_subj_06 else
+            f'{subj_poss} {face_desc_tag} and anatomical proportions'
+        )
+    )
+    posture_lock_clause = 'subject anatomy' if (has_explicit_stance_06 or wants_dynamic_vertical_choreo_06 or wants_garment_dynamics_06 or is_non_human_06) else 'posture framing'
     vocal_body_clause = 'active full-body choreography and expressive performance' if (wants_dynamic_vertical_choreo_06 or wants_garment_dynamics_06) else 'expressive body performance'
-    wants_room_or_outfit_swap = bool(re.search(r'(?i)\b(?:changes?\s+(?:into|her\s+outfit|clothes|rooms?)|teleports?\s+to|cuts?\s+to\s+another\s+room)\b', str(user_scene_input or '')))
-    env_garment_lock = '' if wants_room_or_outfit_swap else f', exact background room decor, and exact outfit of {ref_pic_lbl} (no room change, no added skirt or unrequested clothing)'
-    if allow_camera_movement:
+    wants_room_or_outfit_swap = (not is_locked_stage_06) or wants_garment_dynamics_06 or bool(re.search(r'(?i)\b(?:changes?\s+(?:into|(?:her|his|their)\s+outfit|clothes|rooms?)|teleports?\s+to|cuts?\s+to\s+another\s+room)\b', str(user_scene_input or '')))
+    surf_cont_lbl = 'natural coat and surface continuity' if is_non_human_06 else 'outfit continuity'
+    attire_cont_lbl = 'natural coat and surface continuity' if is_non_human_06 else 'attire continuity'
+    subj_id_lbl = 'species identity' if is_non_human_06 else 'character identity'
+    if is_one_shot_06:
+        env_garment_lock = f', and {subj_id_lbl} of {ref_pic_lbl} across the continuous camera journey' if wants_undress_or_erotic_06 else f', {subj_id_lbl}, and {surf_cont_lbl} of {ref_pic_lbl} across the continuous camera journey'
+    elif is_multi_cut_06:
+        env_garment_lock = f', and {subj_id_lbl} of {ref_pic_lbl}' if wants_undress_or_erotic_06 else f', {subj_id_lbl}, and {surf_cont_lbl} of {ref_pic_lbl}'
+    else:
+        env_garment_lock = '' if wants_room_or_outfit_swap else f', background environment, and {attire_cont_lbl} of {ref_pic_lbl}'
+    if is_multi_cut_06:
+        unified_lead = (
+            f'Cinematic multi-scene production preserving {lead_id_clause}{env_garment_lock} as {ref_subj_lbl} performs {vocal_action_gerund} with {vocal_body_clause}.'
+            if is_vocal_perf else
+            f'Cinematic multi-scene production preserving {lead_id_clause}{env_garment_lock} and {hair_motion_clause} in natural proportion.'
+        )
+    elif is_one_shot_06:
+        unified_lead = (
+            f'Single continuous unbroken one-shot tracking take preserving {lead_id_clause}{env_garment_lock} while following {ref_subj_lbl} smoothly through the evolving environment {vocal_action_gerund}.'
+            if is_vocal_perf else
+            f'Single continuous unbroken one-shot tracking take preserving {lead_id_clause}{env_garment_lock} and {hair_motion_clause} while gliding smoothly through the evolving environment.'
+        )
+    elif allow_camera_movement:
         unified_lead = (
             f'Single continuous unbroken shot maintaining the exact shading, lighting{env_garment_lock} while executing the requested camera movement smoothly as {ref_subj_lbl} faces the camera lens {vocal_action_gerund} with {vocal_body_clause}.'
             if is_vocal_perf else
@@ -960,13 +1297,18 @@ def _extract_chronological_shot_prompts(timeline_prompt: str, num_windows: int=3
     compact_theme = (use_theme_full[:240].rsplit('.', 1)[0].strip() + '.') if len(use_theme_full) > 240 and '.' in use_theme_full[:240] else use_theme_full[:240].strip()
     for (idx, b_txt) in enumerate(raw_bodies):
         clean_b = _sanitize_upright_eye_level_action(b_txt, shot_idx=idx)
-        eff_theme = use_theme_full if idx == 0 else compact_theme
+        is_cut_act = bool(is_multi_cut_06 and idx >= 1 and clean_b.startswith('[SCENE CUT]'))
+        eff_theme = (use_theme_full if idx == 0 else ('' if is_cut_act else compact_theme))
         shot_theme_suffix = f' {eff_theme}' if eff_theme and eff_theme[:32].lower() not in clean_b.lower() else ''
-        if idx == 0 and is_ref2va and '(from [shot 1]) is fully referenced' not in clean_b.lower():
+        if (idx == 0 or is_cut_act) and is_ref2va and '(from [shot 1]) is fully referenced' not in clean_b.lower():
             pic1_ref_prefix = '<Picture 1> (from [Shot 1]) is fully referenced for the two-character master scene, <Picture 2> anchors <Subject 2> on the right, and <Picture 3> anchors <Subject 1> on the left. ' if has_dual_subj_06 else '<Picture 1> (from [Shot 1]) is fully referenced. '
         else:
             pic1_ref_prefix = ''
-        anchored = f'[Shot 1]\n{pic1_ref_prefix}{clean_b} {unified_lead}{shot_theme_suffix}'.strip()
+        if is_cut_act:
+            clean_b_body = re.sub(r'(?i)^\[\s*SCENE[\s_-]*CUT\s*\]\s*', '', clean_b).strip()
+            anchored = f'[Shot 1]\n[SCENE CUT] {pic1_ref_prefix}{clean_b_body} {unified_lead}{shot_theme_suffix}'.strip()
+        else:
+            anchored = f'[Shot 1]\n{pic1_ref_prefix}{clean_b} {unified_lead}{shot_theme_suffix}'.strip()
         full_act = f'{anchored}\n\n{tail_ctx}'.strip() if tail_ctx else anchored.strip()
         acts.append(full_act)
     return acts[:max(1, target_wins)]
@@ -983,7 +1325,7 @@ def _h3_frames_to_video_tokens(frames: int) -> int:
 def _h3_frames_to_audio_tokens(frames: int, fps: float = 24.0) -> int:
     return max(1, int(round(float(max(1, int(frames))) * 40.0 / max(1.0, float(fps)))))
 
-def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_model_ref2va, video_clip, video_vae, production_mode: str, timeline_prompt: str, negative_prompt: str, video_width: int, video_height: int, duration_seconds: float, frame_rate: float, overlap_frames: int, keyframe_image=None, audio_vae=None, tier_profile: dict=None, ref_image_2_person=None, ref_image_3_clothing=None, ref_image_4_background=None, motion_physics_mode: str='auto_from_style_and_audio (Auto från Stil & Ljud)', motion_transfer_strength: float=0.65, reference_motion_video=None, reference_video_audio=None, style_target: str='', is_nsfw: bool=True, allow_camera_movement: bool=False, subject_stance_posture: str='auto_from_prompt (Auto från Prompt / Bild)', body_choreography_preset: str='auto_from_prompt_or_audio (Auto från Prompt / Ljud)', camera_trajectory_arc: str='follow_02_camera_setting (Följ [02] Kamerainställning / Auto)', rating_tier: str='uncensored_action', temporal_window_horizon: str=TEMPORAL_WINDOW_HORIZON_MODES[0], slot5_focus_mode: str='', user_scene_input: str=''):
+def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_model_ref2va, video_clip, video_vae, production_mode: str, timeline_prompt: str, negative_prompt: str, video_width: int, video_height: int, duration_seconds: float, frame_rate: float, overlap_frames: int, keyframe_image=None, audio_vae=None, tier_profile: dict=None, ref_image_2_person=None, ref_image_3_clothing=None, ref_image_4_background=None, motion_physics_mode: str='auto_from_style_and_audio (Auto från Stil & Ljud)', motion_transfer_strength: float=0.65, reference_motion_video=None, reference_video_audio=None, style_target: str='', is_nsfw: bool=True, allow_camera_movement: bool=False, subject_stance_posture: str='auto_from_prompt (Auto från Prompt / Bild)', body_choreography_preset: str='auto_from_prompt_or_audio (Auto från Prompt / Ljud)', camera_trajectory_arc: str='follow_02_camera_setting (Följ [02] Kamerainställning / Auto)', rating_tier: str='uncensored_action', temporal_window_horizon: str=TEMPORAL_WINDOW_HORIZON_MODES[0], slot5_focus_mode: str='', user_scene_input: str='', scene_continuity_mode: str=SCENE_CONTINUITY_MODES[0]):
     prof = dict(tier_profile) if isinstance(tier_profile, dict) else {}
     tile_sz = int(prof.get('tile_size', 512) or 512)
     is_licensed = bool(prof.get('is_licensed', True))
@@ -1029,17 +1371,29 @@ def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_mod
     h = max(64, int(round(video_height / 32.0) * 32))
     clean_full_prompt = str(timeline_prompt or '').strip()
     eff_user_scene_in = str(user_scene_input or '').strip() or clean_full_prompt
+    resolved_continuity_mode = resolve_scene_continuity_mode(
+        scene_continuity_mode=scene_continuity_mode,
+        user_scene_input=eff_user_scene_in,
+        subject_stance_posture=subject_stance_posture,
+        body_choreography_preset=body_choreography_preset,
+        camera_trajectory_arc=camera_trajectory_arc,
+    )
+    if resolved_continuity_mode != 'locked_stage_environment':
+        allow_camera_movement = True
     tier_low_06 = str(rating_tier or '').strip().lower()
+    st_low_dir = str(subject_stance_posture or '').strip().lower()
+    ch_low_dir = str(body_choreography_preset or '').strip().lower()
+    if tier_low_06 != 'sfw' and (st_low_dir.startswith('nsfw_') or ch_low_dir.startswith('nsfw_') or bool(_DIRECTOR_EROTIC_REGEX.search(eff_user_scene_in))):
+        tier_low_06 = 'nsfw_explicit'
+        rating_tier = 'nsfw_explicit'
     if tier_low_06 == 'sfw':
         clean_full_prompt = _scrub_unrequested_genital_hallucinations(clean_full_prompt, '')
-    elif tier_low_06 != 'nsfw_explicit':
-        clean_full_prompt = _scrub_unrequested_genital_hallucinations(clean_full_prompt, eff_user_scene_in)
     is_vocal_scene = bool(str(motion_physics_mode or '').strip().lower().startswith('expressive_vocal')) or bool(reference_video_audio is not None) or bool(re.search(r'(?i)\b(?:suno\s+rhythmic|32khz\s+vocal\s+waveform|phoneme[-\s]?accurate\s+lip[-\s]?sync|studio\s+lead\s+vocals|expressive\s+singing|singing\s+expressively|vocal\s+envelope)\b', clean_full_prompt))
     resolved_physics_mode = resolve_effective_motion_physics_mode(motion_physics_mode, style_target=style_target, is_vocal_perf=is_vocal_scene)
     if resolved_physics_mode == 'expressive_vocal_mocap':
         is_vocal_scene = True
     if not is_vocal_scene:
-        clean_full_prompt = _scrub_sfx_vocal_triggers(clean_full_prompt)
+        clean_full_prompt = _scrub_sfx_vocal_triggers(clean_full_prompt, eff_user_scene_in)
     eff_horizon_sec = resolve_effective_window_horizon_seconds(
         temporal_window_horizon=temporal_window_horizon,
         video_arch=video_arch,
@@ -1078,8 +1432,23 @@ def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_mod
     latent_t = _h3_frames_to_video_tokens(seg1_frames) if video_arch == 'minimax_h3' else max(1, (seg1_frames - 1) // 4 + 1)
     latent_h = max(1, h // sp_down)
     latent_w = max(1, w // sp_down)
-    act_prompts = _extract_chronological_shot_prompts(clean_full_prompt, num_windows=num_macro_segments, is_ref2va=bool(use_ref_model), is_vocal_override=is_vocal_scene, user_scene_input=eff_user_scene_in, allow_camera_movement=bool(allow_camera_movement), subject_stance_posture=subject_stance_posture)
-    act_prompts = _apply_3axis_window_directives_to_acts(act_prompts, subject_stance_posture=subject_stance_posture, body_choreography_preset=body_choreography_preset, camera_trajectory_arc=camera_trajectory_arc)
+    dir_auth_full = _build_director_preset_and_species_authority(
+        timeline_prompt=clean_full_prompt,
+        user_scene_input=eff_user_scene_in,
+        subject_stance_posture=subject_stance_posture,
+        body_choreography_preset=body_choreography_preset,
+        camera_trajectory_arc=camera_trajectory_arc,
+        motion_physics_mode=motion_physics_mode,
+        resolved_physics_mode=resolved_physics_mode,
+        allow_camera_movement=bool(allow_camera_movement),
+        has_keyframe_ref=_has_real_ref_pixels(keyframe_image),
+        existing_negative=negative_prompt,
+    )
+    negative_prompt = dir_auth_full['merged_negative']
+    act_prompts = _extract_chronological_shot_prompts(clean_full_prompt, num_windows=num_macro_segments, is_ref2va=bool(use_ref_model), is_vocal_override=is_vocal_scene, user_scene_input=eff_user_scene_in, allow_camera_movement=bool(allow_camera_movement), subject_stance_posture=subject_stance_posture, scene_continuity_mode=resolved_continuity_mode, rating_tier=tier_low_06)
+    editorial_scenecut_indices = extract_editorial_scenecut_window_indices(act_prompts, resolved_continuity_mode)
+    act_prompts = [re.sub(r'(?i)\[\s*(?:SCENE[\s_-]*CUT|HARD[\s_-]*CUT|SMASH[\s_-]*CUT)\s*\]\s*', '', str(a or '')).strip() for a in act_prompts]
+    act_prompts = _apply_3axis_window_directives_to_acts(act_prompts, subject_stance_posture=subject_stance_posture, body_choreography_preset=body_choreography_preset, camera_trajectory_arc=camera_trajectory_arc, motion_physics_mode=motion_physics_mode, resolved_physics_mode=resolved_physics_mode)
     pro_speaker_routing = _analyze_pro_voice_and_scenecut_identity_routing(
         reference_motion_video,
         reference_video_audio,
@@ -1100,8 +1469,10 @@ def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_mod
                     .replace('<Subject 1>', '<Subject 2>')
                 )
     if clean_full_prompt:
-        clean_full_prompt = re.sub('(?i)following\\s+a\\s+(?:sudden\\s+cinematic\\s+smash|secondary\\s+rapid\\s+cinematic)\\s+cut\\s*,?', 'continuing seamlessly in the exact same continuous shot and lighting,', clean_full_prompt)
-        clean_full_prompt = re.sub('(?i)\\b(?:smash\\s+cut|rapid\\s+cut|jump\\s+cut|hard\\s+cut|cuts?\\s+to)\\b', 'smoothly transitions within the same continuous camera framing and exposure', clean_full_prompt)
+        clean_full_prompt = re.sub(r'(?i)\[\s*(?:SCENE[\s_-]*CUT|HARD[\s_-]*CUT|SMASH[\s_-]*CUT)\s*\]\s*', '', clean_full_prompt)
+        if resolved_continuity_mode != 'hollywood_multi_scene_cuts':
+            clean_full_prompt = re.sub('(?i)following\\s+a\\s+(?:sudden\\s+cinematic\\s+smash|secondary\\s+rapid\\s+cinematic)\\s+cut\\s*,?', 'continuing seamlessly in the exact same continuous shot and lighting,', clean_full_prompt)
+            clean_full_prompt = re.sub('(?i)\\b(?:smash\\s+cut|rapid\\s+cut|jump\\s+cut|hard\\s+cut|cuts?\\s+to)\\b', 'smoothly transitions within the same continuous camera framing and exposure', clean_full_prompt)
         if is_vocal_scene:
             clean_full_prompt = re.sub('(?i);?\\s*strictly\\s+no\\s+singing,?\\s*no\\s+vocals,?\\s*(?:no\\s+human\\s+voice,?\\s*)?(?:and\\s+)?no\\s+lyrics\\.?', '.', clean_full_prompt)
         else:
@@ -1244,27 +1615,7 @@ def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_mod
     anat_face_crop = _prep_ref_img(anatomical_latent_zones.get('face_crop_bhwc')) if isinstance(anatomical_latent_zones, dict) else None
     anat_torso_crop = _prep_ref_img(anatomical_latent_zones.get('torso_crop_bhwc')) if isinstance(anatomical_latent_zones, dict) else None
     anat_pelvic_crop = _prep_ref_img(anatomical_latent_zones.get('pelvic_crop_bhwc')) if isinstance(anatomical_latent_zones, dict) else None
-    has_dual_subj_dir = bool(re.search(r'(?i)(?:<\s*(?:main[_\s-]*)?subject\s*[2-9]\s*>|\bcharacter\s*2\b|\bgoblin\b|\binterview(?:ing|s|ed)?\b|\bco-?anchor\b|\bsenator\b|\btwo[-\s]?shot\b|\btwo\s+characters\b)', clean_full_prompt))
-    co_star_right_crop = None
-    lead_left_crop = None
-    if has_dual_subj_dir and isinstance(first_frame_in, torch.Tensor) and first_frame_in.ndim == 4:
-        try:
-            (fh_c, fw_c) = (int(first_frame_in.shape[1]), int(first_frame_in.shape[2]))
-            y0_c = max(0, int(round(fh_c * 0.04)))
-            y1_c = min(fh_c, max(y0_c + 16, int(round(fh_c * 0.94))))
-            rx0_c = max(0, int(round(fw_c * 0.48)))
-            rx1_c = min(fw_c, max(rx0_c + 16, int(round(fw_c * 0.98))))
-            lx0_c = max(0, int(round(fw_c * 0.02)))
-            lx1_c = min(fw_c, max(lx0_c + 16, int(round(fw_c * 0.52))))
-            co_star_right_crop = _prep_ref_img(first_frame_in[:1, y0_c:y1_c, rx0_c:rx1_c, :3])
-            lead_left_crop = _prep_ref_img(first_frame_in[:1, y0_c:y1_c, lx0_c:lx1_c, :3])
-        except Exception:
-            co_star_right_crop = None
-            lead_left_crop = None
-    if has_dual_subj_dir and r2_in is None and co_star_right_crop is not None:
-        r2_in = co_star_right_crop
-    if has_dual_subj_dir and r3_in is None and lead_left_crop is not None:
-        r3_in = lead_left_crop
+    has_dual_subj_dir = bool(re.search(r'(?i)(?:<\s*(?:main[_\s-]*)?subject\s*[2-9]\s*>|\bcharacter\s*2\b|\binterview(?:ing|s|ed)?\b|\bco-?anchor\b|\btwo[-\s]?shot\b|\btwo\s+(?:characters|people|lovers)\b|\btvå\s+(?:personer|karaktärer)\b)', clean_full_prompt))
     primary_anchor_in = first_frame_in if first_frame_in is not None else r2_in
     keyframe_relay_anchors = _synthesize_start_mid_end_keyframes(
         primary_anchor_in,
@@ -1282,6 +1633,8 @@ def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_mod
     )
     has_explicit_fl2va_end = bool(str(production_mode).upper() == 'FL2VA' and not has_dual_subj_dir and isinstance(reference_motion_video, torch.Tensor) and reference_motion_video.ndim == 4 and int(reference_motion_video.shape[0]) >= 3)
     batch_clip = _BatchPreEncodeClipWrapper(video_clip, act_prompts, negative_prompt, multi_segment=(num_macro_segments > 1))
+    ref2va_w0_kf_lat = None
+    has_explicit_extra_refs = any((isinstance(im, torch.Tensor) and im.ndim == 4 for im in (r2_in, r3_in, r4_in)))
     if video_arch == 'minimax_h3':
         try:
             from comfy_extras.nodes_minimax_h3 import MiniMaxH3ImageToVideo
@@ -1289,10 +1642,21 @@ def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_mod
             if use_ref_model and audio_vae is not None:
                 try:
                     from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo
-                    eff_r2 = r2_in if isinstance(r2_in, torch.Tensor) else anat_face_crop
-                    eff_r3 = r3_in if isinstance(r3_in, torch.Tensor) else anat_torso_crop
-                    eff_r4 = r4_in if isinstance(r4_in, torch.Tensor) else (anat_pelvic_crop if is_nsfw else None)
-                    ref_list = [im for im in (first_frame_in, eff_r2, eff_r3, eff_r4) if isinstance(im, torch.Tensor) and im.ndim == 4]
+                    if isinstance(first_frame_in, torch.Tensor) and first_frame_in.ndim == 4:
+                        ref_list = [im for im in (first_frame_in, r2_in, r3_in, r4_in) if isinstance(im, torch.Tensor) and im.ndim == 4]
+                        try:
+                            enc_r0 = video_vae.encode(first_frame_in).detach().cpu()
+                            if enc_r0.ndim == 4:
+                                enc_r0 = enc_r0.unsqueeze(2)
+                            if enc_r0.ndim == 5 and int(enc_r0.shape[2]) >= 1:
+                                ref2va_w0_kf_lat = enc_r0[:, :, 0:1, :, :].float()
+                        except Exception:
+                            ref2va_w0_kf_lat = None
+                    else:
+                        eff_r2 = r2_in if isinstance(r2_in, torch.Tensor) else anat_face_crop
+                        eff_r3 = r3_in if isinstance(r3_in, torch.Tensor) else anat_torso_crop
+                        eff_r4 = r4_in if isinstance(r4_in, torch.Tensor) else (anat_pelvic_crop if is_nsfw else None)
+                        ref_list = [im for im in (eff_r2, eff_r3, eff_r4) if isinstance(im, torch.Tensor) and im.ndim == 4]
                     ref_batch = torch.cat(ref_list, dim=0) if ref_list else None
                     h3_res = MiniMaxH3ReferenceToVideo.execute(batch_clip, video_vae, audio_vae, first_act_prompt, w, h, seg1_frames, 'match', ref_batch, None, None, None)
                     if h3_res is not None and video_model_ref2va is not None:
@@ -1319,7 +1683,15 @@ def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_mod
                     h3_noise_mask = h3_noise_mask.clone()
                     end_min_noise = 0.28 if has_explicit_fl2va_end else 0.45
                     h3_noise_mask[:, :, -1:, :, :] = torch.clamp(h3_noise_mask[:, :, -1:, :, :], min=end_min_noise)
-            negative_cond = [[torch.zeros_like(t[0]), dict(t[1])] for t in positive_cond]
+            if str(negative_prompt or '').strip() and video_clip is not None:
+                try:
+                    pos_meta_h3 = dict(positive_cond[0][1]) if positive_cond and len(positive_cond[0]) > 1 and isinstance(positive_cond[0][1], dict) else {}
+                    raw_neg_h3 = _offload_cond_list(video_clip.encode_from_tokens_scheduled(video_clip.tokenize(str(negative_prompt).strip())))
+                    negative_cond = [[item[0], {**pos_meta_h3, **(dict(item[1]) if len(item) > 1 and isinstance(item[1], dict) else {})}] for item in raw_neg_h3]
+                except Exception:
+                    negative_cond = [[torch.zeros_like(t[0]), dict(t[1])] for t in positive_cond]
+            else:
+                negative_cond = [[torch.zeros_like(t[0]), dict(t[1])] for t in positive_cond]
             for enc_act in batch_clip.act_cond_lists:
                 if isinstance(enc_act, list) and len(enc_act) > 0 and isinstance(enc_act[0][0], torch.Tensor):
                     act_tensors.append(enc_act[0][0].detach().cpu())
@@ -1359,9 +1731,14 @@ def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_mod
     if positive_cond is None or negative_cond is None or base_latent is None:
         pos_tokens = batch_clip.tokenize(first_act_prompt)
         positive_cond = _offload_cond_list(batch_clip.encode_from_tokens_scheduled(pos_tokens))
-        if str(negative_prompt or '').strip() and video_arch != 'minimax_h3':
-            neg_tokens = video_clip.tokenize(str(negative_prompt))
-            negative_cond = _offload_cond_list(video_clip.encode_from_tokens_scheduled(neg_tokens))
+        if str(negative_prompt or '').strip() and video_clip is not None:
+            try:
+                pos_meta_fb = dict(positive_cond[0][1]) if positive_cond and len(positive_cond[0]) > 1 and isinstance(positive_cond[0][1], dict) else {}
+                neg_tokens = video_clip.tokenize(str(negative_prompt).strip())
+                raw_neg_fb = _offload_cond_list(video_clip.encode_from_tokens_scheduled(neg_tokens))
+                negative_cond = [[item[0], {**pos_meta_fb, **(dict(item[1]) if len(item) > 1 and isinstance(item[1], dict) else {})}] for item in raw_neg_fb]
+            except Exception:
+                negative_cond = [[torch.zeros_like(t[0]), dict(t[1])] for t in positive_cond]
         else:
             negative_cond = [[torch.zeros_like(t[0]), dict(t[1])] for t in positive_cond]
         pre_encoded_clip_cache[first_act_prompt] = positive_cond
@@ -1387,7 +1764,7 @@ def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_mod
                 h3_noise_mask[:, :, :t_copy, :, :] = 0.0
             except Exception:
                 pass
-    (positive_cond, negative_cond) = project_video_kinematic_conditioning(video_clip, positive_cond, negative_cond, resolved_physics_mode, is_nsfw=is_nsfw, video_arch=video_arch, motion_strength=float(motion_transfer_strength))
+    (positive_cond, negative_cond) = project_video_kinematic_conditioning(video_clip, positive_cond, negative_cond, resolved_physics_mode, is_nsfw=is_nsfw, video_arch=video_arch, motion_physics_mode=motion_physics_mode, motion_strength=float(motion_transfer_strength))
     total_latent_t = _h3_frames_to_video_tokens(total_frames) if video_arch == 'minimax_h3' else max(1, (total_frames - 1) // 4 + 1)
     mocap_latent_deltas = _extract_latent_motion_capture_deltas(reference_motion_video, video_vae, w, h, total_latent_t, tile_sz=tile_sz, target_first_frame=first_frame_in, slot5_focus_mode=slot5_focus_mode)
     if video_arch == 'minimax_h3':
@@ -1431,8 +1808,8 @@ def build_temporal_director_conditioning_and_latent(video_model_fl2va, video_mod
     m_kf_out = keyframe_relay_anchors[1] if len(keyframe_relay_anchors) >= 2 else s_kf_out
     e_kf_out = keyframe_relay_anchors[2] if len(keyframe_relay_anchors) >= 3 else s_kf_out
     is_crowd_mode = any(str(subject_stance_posture or '').strip().lower().startswith(k) for k in ('standing_social', 'epic_battlefield', 'nsfw_threesome', 'nsfw_orgy'))
-    cont_ctx = {'video_arch': video_arch, 'video_clip': video_clip, 'video_vae': video_vae, 'audio_vae': audio_vae, 'width': int(w), 'height': int(h), 'frame_rate': float(frame_rate), 'production_mode': str(production_mode), 'has_explicit_fl2va_end': bool(has_explicit_fl2va_end), 'act_prompts': list(act_prompts), 'sanitizer_version': 'v20_pose_neutral_zero_legacy_traps', 'timeline_prompt': str(clean_full_prompt or first_act_prompt or ''), 'raw_timeline_prompt': str(timeline_prompt or ''), 'user_scene_input': str(eff_user_scene_in), 'rating_tier': str(rating_tier or 'uncensored_action'), 'negative_prompt': str(negative_prompt or ''), 'tile_size': int(tile_sz), 'first_frame_in': first_frame_in, 'start_keyframe': s_kf_out, 'mid_keyframe': m_kf_out, 'end_keyframe': e_kf_out, 'r2_in': r2_in, 'r3_in': r3_in, 'r4_in': r4_in, 'anat_face_crop': anat_face_crop, 'anat_torso_crop': anat_torso_crop, 'anat_pelvic_crop': anat_pelvic_crop if is_nsfw else None, 'keyframe_relay_anchors': keyframe_relay_anchors, 'pre_encoded_clip_cache': pre_encoded_clip_cache, 'num_macro_segments': int(num_macro_segments), 'macro_segment_frames': int(seg1_frames), 'total_target_frames': int(total_frames), 'window_horizon_seconds': float(eff_horizon_sec), 'temporal_window_horizon': str(temporal_window_horizon), 'pro_focus_seam_active': bool(pro_focus_seam_active), 'motion_physics_mode': resolved_physics_mode, 'motion_transfer_strength': float(motion_transfer_strength), 'mocap_latent_deltas': mocap_latent_deltas, 'anatomical_latent_zones': anatomical_latent_zones, 'pro_speaker_routing': pro_speaker_routing, 'is_nsfw': bool(is_nsfw), 'is_vocal_scene': bool(is_vocal_scene), 'allow_camera_movement': bool(allow_camera_movement), 'subject_stance_posture': str(subject_stance_posture), 'body_choreography_preset': str(body_choreography_preset), 'camera_trajectory_arc': str(camera_trajectory_arc), 'is_multi_subject_crowd': bool(is_crowd_mode)}
-    latent_dict = {'samples': base_latent, 'overlap_frames': int(overlap_frames), 'total_frames': int(total_frames), 'frame_rate': float(frame_rate), 'production_mode': production_mode, 'hardware_tier_profile': prof, 'window_horizon_seconds': float(eff_horizon_sec), 'temporal_window_horizon': str(temporal_window_horizon), 'pro_focus_seam_active': bool(pro_focus_seam_active), 'motion_physics_mode': resolved_physics_mode, 'motion_transfer_strength': float(motion_transfer_strength), 'mocap_latent_deltas': mocap_latent_deltas, 'anatomical_latent_zones': anatomical_latent_zones, 'pro_speaker_routing': pro_speaker_routing, 'is_vocal_scene': bool(is_vocal_scene), 'allow_camera_movement': bool(allow_camera_movement), 'subject_stance_posture': str(subject_stance_posture), 'body_choreography_preset': str(body_choreography_preset), 'camera_trajectory_arc': str(camera_trajectory_arc), 'is_multi_subject_crowd': bool(is_crowd_mode), 'ez_continuation_ctx': cont_ctx}
+    cont_ctx = {'video_arch': video_arch, 'video_clip': video_clip, 'video_vae': video_vae, 'audio_vae': audio_vae, 'video_model_ref2va': video_model_ref2va, 'width': int(w), 'height': int(h), 'frame_rate': float(frame_rate), 'production_mode': str(production_mode), 'has_explicit_fl2va_end': bool(has_explicit_fl2va_end), 'has_explicit_extra_refs': bool(has_explicit_extra_refs), 'ref2va_w0_kf_latent': ref2va_w0_kf_lat, 'act_prompts': list(act_prompts), 'sanitizer_version': 'v35_preset_authority_and_species_fidelity', 'timeline_prompt': str(clean_full_prompt or first_act_prompt or ''), 'raw_timeline_prompt': str(timeline_prompt or ''), 'user_scene_input': str(eff_user_scene_in), 'rating_tier': str(rating_tier or 'uncensored_action'), 'negative_prompt': str(negative_prompt or ''), 'raw_motion_physics_mode': str(motion_physics_mode or ''), 'is_non_human_subject': bool(dir_auth_full['is_non_human']), 'tile_size': int(tile_sz), 'first_frame_in': first_frame_in, 'start_keyframe': s_kf_out, 'mid_keyframe': m_kf_out, 'end_keyframe': e_kf_out, 'r2_in': r2_in, 'r3_in': r3_in, 'r4_in': r4_in, 'anat_face_crop': anat_face_crop, 'anat_torso_crop': anat_torso_crop, 'anat_pelvic_crop': anat_pelvic_crop if is_nsfw else None, 'keyframe_relay_anchors': keyframe_relay_anchors, 'pre_encoded_clip_cache': pre_encoded_clip_cache, 'num_macro_segments': int(num_macro_segments), 'macro_segment_frames': int(seg1_frames), 'total_target_frames': int(total_frames), 'window_horizon_seconds': float(eff_horizon_sec), 'temporal_window_horizon': str(temporal_window_horizon), 'pro_focus_seam_active': bool(pro_focus_seam_active), 'motion_physics_mode': resolved_physics_mode, 'motion_transfer_strength': float(motion_transfer_strength), 'mocap_latent_deltas': mocap_latent_deltas, 'anatomical_latent_zones': anatomical_latent_zones, 'pro_speaker_routing': pro_speaker_routing, 'is_nsfw': bool(is_nsfw), 'is_vocal_scene': bool(is_vocal_scene), 'allow_camera_movement': bool(allow_camera_movement), 'subject_stance_posture': str(subject_stance_posture), 'body_choreography_preset': str(body_choreography_preset), 'camera_trajectory_arc': str(camera_trajectory_arc), 'scene_continuity_mode': str(scene_continuity_mode), 'resolved_scene_continuity_mode': str(resolved_continuity_mode), 'editorial_scenecut_indices': list(editorial_scenecut_indices), 'is_multi_subject_crowd': bool(is_crowd_mode)}
+    latent_dict = {'samples': base_latent, 'overlap_frames': int(overlap_frames), 'total_frames': int(total_frames), 'frame_rate': float(frame_rate), 'production_mode': production_mode, 'hardware_tier_profile': prof, 'window_horizon_seconds': float(eff_horizon_sec), 'temporal_window_horizon': str(temporal_window_horizon), 'pro_focus_seam_active': bool(pro_focus_seam_active), 'motion_physics_mode': resolved_physics_mode, 'raw_motion_physics_mode': str(motion_physics_mode or ''), 'motion_transfer_strength': float(motion_transfer_strength), 'mocap_latent_deltas': mocap_latent_deltas, 'anatomical_latent_zones': anatomical_latent_zones, 'pro_speaker_routing': pro_speaker_routing, 'is_vocal_scene': bool(is_vocal_scene), 'is_non_human_subject': bool(dir_auth_full['is_non_human']), 'allow_camera_movement': bool(allow_camera_movement), 'subject_stance_posture': str(subject_stance_posture), 'body_choreography_preset': str(body_choreography_preset), 'camera_trajectory_arc': str(camera_trajectory_arc), 'scene_continuity_mode': str(scene_continuity_mode), 'resolved_scene_continuity_mode': str(resolved_continuity_mode), 'editorial_scenecut_indices': list(editorial_scenecut_indices), 'is_multi_subject_crowd': bool(is_crowd_mode), 'ez_continuation_ctx': cont_ctx}
     if h3_noise_mask is not None:
         latent_dict['noise_mask'] = h3_noise_mask
     return (active_model, positive_cond, negative_cond, latent_dict, float(frame_rate))

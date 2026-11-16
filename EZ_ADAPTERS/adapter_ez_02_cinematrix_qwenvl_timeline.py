@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from ..EZ_ENGINES.engine_ez_02_cinematrix_qwenvl_timeline import _verify_cinematrix_license_active, _resolve_dropdown_custom_or_random, discover_dynamic_vlm_models, _tensor_to_pil_and_b64, _resolve_local_vlm_path, _run_local_transformers_vlm, _parse_subject_age_years, _build_age_authority_profile, _apply_age_override_to_text, _normalize_qwenvl_two_block_output, execute_qwenvl_story_compiler, _resolve_audio_soundtrack_mode, _resolve_content_rating_tier, _is_intentional_camera_movement_requested, _resolve_3axis_director_directives, _analyze_scene_cast_and_extras, MASTER_DURATION_PRESETS, STYLE_TARGET_PRESETS, CAMERA_ZOOM_PRESETS, LIGHTING_AMBIENT_PRESETS, SUBJECT_AGE_PRESETS, AGE_DIFFERENCE_PRESETS, CAMERA_MOVEMENT_PRESETS, AUDIO_SOUNDTRACK_MODE_PRESETS, CONTENT_RATING_MODE_PRESETS, SUBJECT_STANCE_POSTURE_PRESETS, BODY_CHOREOGRAPHY_PRESETS, CAMERA_TRAJECTORY_ARC_PRESETS, BACKGROUND_EXTRAS_CROWD_PRESETS
+from ..EZ_ENGINES.engine_ez_02_cinematrix_qwenvl_timeline import _verify_cinematrix_license_active, _resolve_dropdown_custom_or_random, discover_dynamic_vlm_models, _tensor_to_pil_and_b64, _resolve_local_vlm_path, _run_local_transformers_vlm, _parse_subject_age_years, _build_age_authority_profile, _apply_age_override_to_text, _normalize_qwenvl_two_block_output, execute_qwenvl_story_compiler, _resolve_audio_soundtrack_mode, _resolve_content_rating_tier, _is_intentional_camera_movement_requested, _resolve_3axis_director_directives, _analyze_scene_cast_and_extras, resolve_scene_continuity_mode, MASTER_DURATION_PRESETS, STYLE_TARGET_PRESETS, CAMERA_ZOOM_PRESETS, LIGHTING_AMBIENT_PRESETS, SUBJECT_AGE_PRESETS, AGE_DIFFERENCE_PRESETS, CAMERA_MOVEMENT_PRESETS, AUDIO_SOUNDTRACK_MODE_PRESETS, CONTENT_RATING_MODE_PRESETS, SUBJECT_STANCE_POSTURE_PRESETS, BODY_CHOREOGRAPHY_PRESETS, CAMERA_TRAJECTORY_ARC_PRESETS, BACKGROUND_EXTRAS_CROWD_PRESETS, SCENE_CONTINUITY_MODES
 
 import base64
 import gc
@@ -22,7 +22,7 @@ class EzCinematrixQwenVLAdapter:
     """Adapter managing Qwen3-VL prompt splitting, dropdown/random/custom resolution, dynamic cast/extras, and VRAM reclamation."""
 
     @staticmethod
-    def run_compiler(user_input: str, vlm_model_name: str, master_duration: str, style_target: str, subject_1_age: str, age_difference: str, camera_movement: str, lm_studio_endpoint: str, vram_cleanup_after: bool, camera_zoom: str='medium-shot', lighting_ambient: str='auto', custom_subject_1_age: str='', custom_age_difference: str='', custom_camera_movement: str='', custom_style_or_lighting: str='', custom_duration_seconds: float=0.0, compiler_seed: int=42, seed_mode: str='auto_from_bus_or_local', content_rating_mode: str='Uncensored Artistic / Action (Ingen Censur — Följer Prompten)', audio_soundtrack_mode: str='sfx_only_no_music (Endast Ljudeffekter / Ingen Musik)', subject_stance_posture: str='auto_from_prompt (Auto från Prompt / Bild)', body_choreography_preset: str='auto_from_prompt_or_audio (Auto från Prompt / Ljud)', camera_trajectory_arc: str='follow_02_camera_setting (Följ [02] Kamerainställning / Auto)', background_extras_crowd: str='auto_from_prompt (Auto från Prompt — Slagsmål / Älskog / Barhäng / Stadsvy / Solo)', reference_image=None, cinematrix_bus=None, custom_negative_prompt: str=''):
+    def run_compiler(user_input: str, vlm_model_name: str, master_duration: str, style_target: str, subject_1_age: str, age_difference: str, camera_movement: str, lm_studio_endpoint: str, vram_cleanup_after: bool, camera_zoom: str='medium-shot', lighting_ambient: str='auto', custom_subject_1_age: str='', custom_age_difference: str='', custom_camera_movement: str='', custom_style_or_lighting: str='', custom_duration_seconds: float=0.0, compiler_seed: int=42, seed_mode: str='auto_from_bus_or_local', content_rating_mode: str='Uncensored Artistic / Action (Ingen Censur — Följer Prompten)', audio_soundtrack_mode: str='sfx_only_no_music (Endast Ljudeffekter / Ingen Musik)', subject_stance_posture: str='auto_from_prompt (Auto från Prompt / Bild)', body_choreography_preset: str='auto_from_prompt_or_audio (Auto från Prompt / Ljud)', camera_trajectory_arc: str='follow_02_camera_setting (Följ [02] Kamerainställning / Auto)', background_extras_crowd: str='auto_from_prompt (Auto från Prompt — Slagsmål / Älskog / Barhäng / Stadsvy / Solo)', reference_image=None, cinematrix_bus=None, custom_negative_prompt: str='', scene_continuity_mode: str=SCENE_CONTINUITY_MODES[0]):
         bus = dict(cinematrix_bus) if isinstance(cinematrix_bus, dict) else {}
         master_seed = int(bus.get('canvas_seed', bus.get('master_seed', compiler_seed)))
         sync_all = bool(bus.get('sync_all_seeds', False)) or str(bus.get('seed_sync_mode', '')).lower().startswith('sync_all')
@@ -110,9 +110,17 @@ class EzCinematrixQwenVLAdapter:
                     eff_cam_move = 'steady locked-off cinema lens maintaining constant camera distance'
         slot2_dual = bool(omni_b.get('slot2_is_dual_subject', False))
         clean_custom_neg = str(custom_negative_prompt or '').strip()
+        eff_cont_mode_raw = str(scene_continuity_mode or SCENE_CONTINUITY_MODES[0]).strip()
+        resolved_cont_sig = resolve_scene_continuity_mode(
+            scene_continuity_mode=eff_cont_mode_raw,
+            user_scene_input=eff_user_input,
+            subject_stance_posture=subject_stance_posture,
+            body_choreography_preset=body_choreography_preset,
+            camera_trajectory_arc=camera_trajectory_arc,
+        )
         dir_3ax_sig = _resolve_3axis_director_directives(subject_stance_posture, body_choreography_preset, camera_trajectory_arc, user_scene_input=eff_user_input, background_extras_crowd=background_extras_crowd, slot2_is_dual_subject=slot2_dual, age_difference=age_difference)
         img_sig_parts = [
-            'v29_clean_2d_anime_no_tusk_poison',
+            'v35_preset_authority_and_species_fidelity',
             str(eff_user_input).strip(),
             str(style_target).strip().lower(),
             str(eff_zoom).strip().lower(),
@@ -122,6 +130,7 @@ class EzCinematrixQwenVLAdapter:
             str(content_rating_mode).strip().lower(),
             ('i2i_initial_pose' if has_any_ref else str(subject_stance_posture).strip().lower()),
             str(background_extras_crowd).strip().lower(),
+            str(resolved_cont_sig).strip().lower(),
             str(custom_subject_1_age).strip(),
             str(custom_age_difference).strip(),
             str(custom_style_or_lighting).strip(),
@@ -134,9 +143,9 @@ class EzCinematrixQwenVLAdapter:
             else:
                 img_sig_parts.append('none')
         img_config_sig = hashlib.sha256('|'.join(img_sig_parts).encode('utf-8')).hexdigest()[:24]
-        allow_cam_move_sig = _is_intentional_camera_movement_requested(camera_movement, custom_camera_movement, user_input) or bool(dir_3ax_sig['force_camera_move'])
+        allow_cam_move_sig = _is_intentional_camera_movement_requested(camera_movement, custom_camera_movement, user_input) or bool(dir_3ax_sig['force_camera_move']) or (resolved_cont_sig != 'locked_stage_environment')
         vid_sig_parts = [
-            'v29_clean_2d_anime_no_tusk_poison',
+            'v35_preset_authority_and_species_fidelity',
             img_config_sig,
             str(eff_master_dur).strip().lower(),
             f'{float(eff_custom_dur):.2f}',
@@ -146,6 +155,8 @@ class EzCinematrixQwenVLAdapter:
             str(body_choreography_preset).strip().lower(),
             str(camera_trajectory_arc).strip().lower(),
             str(background_extras_crowd).strip().lower(),
+            str(eff_cont_mode_raw).strip().lower(),
+            str(resolved_cont_sig).strip().lower(),
             str(bool(allow_cam_move_sig)),
             str(eff_audio_arg).strip().lower(),
             str(suno_cfg.get('audio_hash', '') if isinstance(suno_cfg, dict) else ''),
@@ -172,7 +183,7 @@ class EzCinematrixQwenVLAdapter:
             resolved_meta = dict(getattr(EzCinematrixQwenVLAdapter, '_last_meta', {}) or {})
             print('[EZ-QWENVL-CACHE] ⚡ Ingen ändring i prompt/kamera/ljud -> Återanvänder cachad Qwen3-VL tidslinje direkt!')
         else:
-            (b1, b2, neg, resolved_meta) = execute_qwenvl_story_compiler(user_scene_input=eff_user_input, vlm_model_name=vlm_model_name, master_duration=eff_master_dur, style_target=style_target, subject_1_age=subject_1_age, age_difference=age_difference, camera_movement=eff_cam_move, lm_studio_endpoint=lm_studio_endpoint, vram_cleanup_after=vram_cleanup_after, camera_zoom=eff_zoom, lighting_ambient=lighting_ambient, custom_subject_1_age=custom_subject_1_age, custom_age_difference=custom_age_difference, custom_camera_movement=custom_camera_movement, custom_style_or_lighting=custom_style_or_lighting, custom_duration_seconds=eff_custom_dur, compiler_seed=eff_seed, reference_image=eff_ref_img, content_rating_mode=content_rating_mode, ref_image_2_person=eff_ref2, ref_image_3_clothing=eff_ref3, ref_image_4_background=eff_ref4, slot2_is_dual_subject=slot2_dual, audio_soundtrack_mode=eff_audio_arg, subject_stance_posture=subject_stance_posture, body_choreography_preset=body_choreography_preset, camera_trajectory_arc=camera_trajectory_arc, background_extras_crowd=background_extras_crowd, custom_negative_prompt=clean_custom_neg)
+            (b1, b2, neg, resolved_meta) = execute_qwenvl_story_compiler(user_scene_input=eff_user_input, vlm_model_name=vlm_model_name, master_duration=eff_master_dur, style_target=style_target, subject_1_age=subject_1_age, age_difference=age_difference, camera_movement=eff_cam_move, lm_studio_endpoint=lm_studio_endpoint, vram_cleanup_after=vram_cleanup_after, camera_zoom=eff_zoom, lighting_ambient=lighting_ambient, custom_subject_1_age=custom_subject_1_age, custom_age_difference=custom_age_difference, custom_camera_movement=custom_camera_movement, custom_style_or_lighting=custom_style_or_lighting, custom_duration_seconds=eff_custom_dur, compiler_seed=eff_seed, reference_image=eff_ref_img, content_rating_mode=content_rating_mode, ref_image_2_person=eff_ref2, ref_image_3_clothing=eff_ref3, ref_image_4_background=eff_ref4, slot2_is_dual_subject=slot2_dual, audio_soundtrack_mode=eff_audio_arg, subject_stance_posture=subject_stance_posture, body_choreography_preset=body_choreography_preset, camera_trajectory_arc=camera_trajectory_arc, background_extras_crowd=background_extras_crowd, custom_negative_prompt=clean_custom_neg, scene_continuity_mode=eff_cont_mode_raw)
             if (not use_locked_seed) and getattr(EzCinematrixQwenVLAdapter, '_last_img_sig', None) == img_config_sig and getattr(EzCinematrixQwenVLAdapter, '_last_b1', ''):
                 b1 = EzCinematrixQwenVLAdapter._last_b1
             else:
@@ -194,17 +205,22 @@ class EzCinematrixQwenVLAdapter:
                 bus['suno_music_studio'] = suno_cfg
             except Exception:
                 pass
+        is_locked_stage_suno = str(resolved_meta.get('resolved_scene_continuity_mode', resolved_cont_sig)).strip().lower() == 'locked_stage_environment'
         if suno_cfg.get('active') and suno_cfg.get('wants_lipsync') and resolved_meta.get('audio_soundtrack_mode') == 'bgm_with_vocals' and not clean_custom_neg:
             neg = re.sub(r'(?i)\b(?:singing|vocals|lyrics|choir|ballad|voiceover|spoken\s+dialogue),\s*', '', str(neg or ''))
             if 'closed mouth' not in neg.lower():
-                neg = f'(closed mouth, static mouth, sealed lips, mute face, spoken narration, text-to-speech monologue, turned back, spinning around, jumping out of frame, walking away from camera, rear view:1.5), {neg}'
-            if not has_any_ref and 'facing the camera' not in b1.lower():
+                if is_locked_stage_suno:
+                    neg = f'(closed mouth, static mouth, sealed lips, mute face, spoken narration, text-to-speech monologue, turned back, spinning around, jumping out of frame, walking away from camera, rear view:1.5), {neg}'
+                else:
+                    neg = f'(closed mouth, static mouth, sealed lips, mute face, spoken narration, text-to-speech monologue:1.5), {neg}'
+            if is_locked_stage_suno and not has_any_ref and 'facing the camera' not in b1.lower():
                 b1 = f'{b1} Framed as a front-facing medium close-up portrait facing the camera directly with clear mouth visibility and expressive parted lips singing toward the lens.'.strip()
-            for idx in range(3):
-                s_tag = f'[Shot {idx + 1}]'
-                lip_cue = f'Maintaining the exact constant medium-wide camera distance, full posture scale, and anatomy of <Picture 1> with zero zoom-in or close-up cuts, <Subject 1> remains facing the camera lens while singing naturally in synchronization with the conditioned 32kHz vocal waveform.'
-                if s_tag in b2 and 'singing naturally in synchronization with the conditioned 32kHz vocal waveform' not in b2:
-                    b2 = b2.replace(s_tag + '\n', f'{s_tag}\n{lip_cue} ', 1)
+            if is_locked_stage_suno:
+                for idx in range(3):
+                    s_tag = f'[Shot {idx + 1}]'
+                    lip_cue = 'Maintaining the constant camera distance and anatomical proportions of <Picture 1> without unrequested zoom-in cuts, <Subject 1> sings naturally in synchronization with the conditioned 32kHz vocal waveform.'
+                    if s_tag in b2 and 'conditioned 32kHz vocal waveform' not in b2:
+                        b2 = b2.replace(s_tag + '\n', f'{s_tag}\n{lip_cue} ', 1)
             if '[Overall Soundscape]' in b2:
                 b2 = re.sub(
                     r'(\[Overall Soundscape\]\s*\n)([^\n]+)',
@@ -216,11 +232,14 @@ class EzCinematrixQwenVLAdapter:
             resolved_meta['duration_seconds'] = float(suno_cfg['duration_sec'])
             resolved_meta['master_duration'] = f"{int(round(float(suno_cfg['duration_sec'])))}-second"
         resolved_meta['allow_camera_movement'] = bool(resolved_meta.get('allow_camera_movement', allow_cam_move_sig))
-        bus.update({'raw_user_scene_input': str(user_input or '').strip(), 'krea2_image_prompt': b1, 'krea2_image_config_sig': img_config_sig, 'h3_video_timeline_prompt': b2, 'adaptive_negative_prompt': neg, 'qwenvl_seed': int(eff_seed), **resolved_meta})
+        resolved_meta['scene_continuity_mode'] = str(resolved_meta.get('scene_continuity_mode', eff_cont_mode_raw))
+        resolved_meta['resolved_scene_continuity_mode'] = str(resolved_meta.get('resolved_scene_continuity_mode', resolved_cont_sig))
+        bus.update({'raw_user_scene_input': str(user_input or '').strip(), 'user_scene_input': str(eff_user_input or '').strip(), 'krea2_image_prompt': b1, 'krea2_image_config_sig': img_config_sig, 'h3_video_timeline_prompt': b2, 'adaptive_negative_prompt': neg, 'qwenvl_seed': int(eff_seed), **resolved_meta})
         globals()['_ACTIVE_QWENVL_SCENE_STATE'] = {
             'style_target': str(resolved_meta.get('style_target', style_target) or 'realism'),
-            'subject_1_age': str(resolved_meta.get('subject_1_age', subject_1_age) or '25-year-old'),
+            'subject_1_age': str(resolved_meta.get('subject_1_age', '') if 'subject_1_age' in resolved_meta else (subject_1_age or '25-year-old')),
             'subject_1_age_num': int(resolved_meta.get('subject_1_age_num', _parse_subject_age_years(subject_1_age)) or 25),
+            'is_non_human_subject': bool(resolved_meta.get('is_non_human_subject', False)),
             'krea2_image_prompt': b1,
             'krea2_image_config_sig': img_config_sig,
             'adaptive_negative_prompt': neg,

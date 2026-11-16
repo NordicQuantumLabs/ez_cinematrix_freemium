@@ -313,19 +313,26 @@ def bind_hot_reload_and_schema_guard(node_mapping: dict, suite_root: Path, packa
     emit_cinematrix_startup_diagnostics(len(node_mapping), suite_root=suite_root)
     _scan_init = _scan_suite_py_mtimes(suite_root)
     _EZ_MTIME_LEDGER.update(_scan_init)
+    setattr(sys, "_EZ_CINEMATRIX_MTIME_LEDGER", _EZ_MTIME_LEDGER)
     for class_key, node_cls in list(node_mapping.items()):
         if getattr(node_cls, "_EZ_HOT_RELOAD_BOUND", False):
             continue
         fn_name = getattr(node_cls, "FUNCTION", None)
         if not fn_name or not hasattr(node_cls, fn_name):
             continue
-        mod_name = getattr(node_cls, "__module__", "")
+        base_cls = (
+            node_cls.__bases__[0]
+            if (node_cls.__name__.endswith(("_PRO", "_Freemium")) and getattr(node_cls, "__bases__", ()))
+            else node_cls
+        )
+        mod_name = getattr(base_cls, "__module__", "") or getattr(node_cls, "__module__", "")
+        target_cls_name = getattr(node_cls, "_EZ_BASE_CLS_NAME", None) or getattr(base_cls, "__name__", node_cls.__name__)
 
         def _make_exec_wrapper(orig_fn_name, cls_name, origin_mod):
             def _wrapped_exec(self, *args, **kwargs):
                 hot_reload_modified_ez_modules(suite_root, package_root)
                 live_mod = sys.modules.get(origin_mod)
-                live_cls = getattr(live_mod, cls_name, self.__class__)
+                live_cls = getattr(live_mod, cls_name, None) or self.__class__
                 healed_kw = sanitize_node_kwargs_against_schema(live_cls, kwargs)
                 raw_fn = getattr(live_cls, "_EZ_ORIG_FUNCTION_REF", None) or getattr(live_cls, orig_fn_name)
                 sig = inspect.signature(raw_fn)
@@ -339,15 +346,16 @@ def bind_hot_reload_and_schema_guard(node_mapping: dict, suite_root: Path, packa
                     if "unexpected keyword argument" in str(type_err):
                         hot_reload_modified_ez_modules(suite_root, package_root, force=True)
                         live_mod = sys.modules.get(origin_mod)
-                        live_cls = getattr(live_mod, cls_name, self.__class__)
+                        live_cls = getattr(live_mod, cls_name, None) or self.__class__
                         raw_fn = getattr(live_cls, "_EZ_ORIG_FUNCTION_REF", None) or getattr(live_cls, orig_fn_name)
                         return raw_fn(self, *args, **healed_kw)
                     raise
             return _wrapped_exec
 
-        setattr(node_cls, "_EZ_ORIG_FUNCTION_REF", getattr(node_cls, fn_name))
-        setattr(node_cls, fn_name, _make_exec_wrapper(fn_name, node_cls.__name__, mod_name))
-        orig_in_fn = getattr(node_cls.__dict__.get("INPUT_TYPES"), "__func__", None)
+        setattr(node_cls, "_EZ_ORIG_FUNCTION_REF", getattr(base_cls, fn_name, getattr(node_cls, fn_name)))
+        setattr(node_cls, fn_name, _make_exec_wrapper(fn_name, target_cls_name, mod_name))
+        orig_in_desc = base_cls.__dict__.get("INPUT_TYPES") or node_cls.__dict__.get("INPUT_TYPES")
+        orig_in_fn = getattr(orig_in_desc, "__func__", None)
         if orig_in_fn is not None:
             setattr(node_cls, "_EZ_ORIG_INPUT_TYPES_FN", orig_in_fn)
 
@@ -356,7 +364,7 @@ def bind_hot_reload_and_schema_guard(node_mapping: dict, suite_root: Path, packa
                 def _wrapped_input_types(cls):
                     hot_reload_modified_ez_modules(suite_root, package_root)
                     live_mod = sys.modules.get(origin_mod)
-                    live_cls = getattr(live_mod, cls_name, cls)
+                    live_cls = getattr(live_mod, cls_name, None) or cls
                     for attr_k in ("RETURN_TYPES", "RETURN_NAMES", "OUTPUT_NODE"):
                         if hasattr(live_cls, attr_k):
                             setattr(cls, attr_k, getattr(live_cls, attr_k))
@@ -374,7 +382,7 @@ def bind_hot_reload_and_schema_guard(node_mapping: dict, suite_root: Path, packa
                     return fallback_fn(cls)
                 return _wrapped_input_types
 
-            setattr(node_cls, "INPUT_TYPES", _make_input_types_wrapper(node_cls.__name__, mod_name, orig_in_fn))
+            setattr(node_cls, "INPUT_TYPES", _make_input_types_wrapper(target_cls_name, mod_name, orig_in_fn))
 
         @classmethod
         def _ez_validate_inputs(cls, **kwargs):

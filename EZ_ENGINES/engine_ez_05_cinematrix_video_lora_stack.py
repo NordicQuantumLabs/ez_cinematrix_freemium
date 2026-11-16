@@ -714,6 +714,24 @@ def _load_video_vae_convrot_safe(vae_path: str):
 
 _PRISM_VIDEO_LORA_CACHE: dict = {}
 
+_EZ05_AUDIO_SUBMODULE_TOKENS: tuple = (
+    'audio', '.aud_', '_aud_', '.aud.',
+    '.a_block', '_a_block',
+    'attn_a', 'ff_a', 'mlp_a', 'norm_a', 'proj_a', 'mod_a', 'adaln_a',
+    '.a_attn', '_a_attn', '.a_mlp', '_a_mlp', '.a_ff', '_a_ff',
+    '.a_norm', '_a_norm', '.a_mod', '_a_mod', '.a_proj', '_a_proj',
+    '.a_in.', '_a_in_', '.a_out.', '_a_out_', '.a_embed', '_a_embed',
+    '.q_a.', '_q_a_', '.k_a.', '_k_a_', '.v_a.', '_v_a_', '.out_a.', '_out_a_',
+    'to_q_a', 'to_k_a', 'to_v_a', 'to_out_a',
+    'a_to_v', 'v_to_a', 'ax_to_vx', 'vx_to_ax',
+    'vocoder', 'mel_', 'sound', 'speaker',
+)
+
+
+def _is_av_audio_lora_key(key_str: str) -> bool:
+    low_k = str(key_str or '').lower()
+    return any((tok in low_k for tok in _EZ05_AUDIO_SUBMODULE_TOKENS))
+
 
 def _ez_prism_process_video_lora_sd(
     lora_sd: dict,
@@ -722,6 +740,7 @@ def _ez_prism_process_video_lora_sd(
     is_turbo: bool = False,
     tail_threshold: float = 0.065,
     orth_strength: float = 0.68,
+    skip_audio: bool = False,
 ) -> dict:
     if not isinstance(lora_sd, dict) or not lora_sd:
         return lora_sd
@@ -732,7 +751,6 @@ def _ez_prism_process_video_lora_sd(
         '.lora_a.weight': '.lora_b.weight',
         '_lora.down.weight': '_lora.up.weight',
     }
-    audio_tokens = ('audio', 'aud_', '_aud', 'attn_a', 'ff_a', 'norm_a', 'proj_a', 'mod_a', 'q_a', 'k_a', 'v_a', 'out_a', 'a_embed', 'audio_vae', 'vocoder')
     try:
         with torch.no_grad():
             for k_down, v_down in list(lora_sd.items()):
@@ -742,7 +760,7 @@ def _ez_prism_process_video_lora_sd(
                 if not matched_sfx:
                     continue
                 stem = str(k_down)[:-len(matched_sfx)]
-                if is_turbo and any((at in stem.lower() for at in audio_tokens)):
+                if (is_turbo or skip_audio) and _is_av_audio_lora_key(stem):
                     continue
                 k_up = stem + up_map[matched_sfx]
                 v_up = lora_sd.get(k_up)
@@ -788,7 +806,7 @@ def _ez_prism_process_video_lora_sd(
                                 s_clean = torch.where(keep_m, s_vals, torch.zeros_like(s_vals))
                                 e_clean = float(torch.linalg.norm(s_clean).item())
                                 if e_clean > 1e-8 and e_orig > e_clean:
-                                    s_clean = s_clean * (e_orig / e_clean)
+                                    s_clean = s_clean * min(1.03, e_orig / e_clean)
                                 sqrt_s = torch.sqrt(torch.clamp(s_clean, min=0.0))
                                 b_f32 = torch.matmul(qb, u_c) * sqrt_s.unsqueeze(0)
                                 a_f32 = sqrt_s.unsqueeze(1) * torch.matmul(vh_c, qa.t())
@@ -808,6 +826,7 @@ def _apply_modality_separated_av_lora(model, clip, lora_sd: dict, video_strength
     c_str = float(clip_strength)
     name_low = str(lora_name or '').lower()
     is_turbo_lora = any((tok in name_low for tok in ('turbo', 'step600', 'step_', 'distill', 'lcm', 'hyper')))
+    is_pre_prism_merged = any((tok in name_low for tok in ('ez_h3_', 'ez_krea2_', 'merged\\', 'merged/', '_prism_')))
     if is_turbo_lora:
         eff_vis = v_str * vis_str
         eff_aud = v_str * a_str
@@ -820,36 +839,44 @@ def _apply_modality_separated_av_lora(model, clip, lora_sd: dict, video_strength
             c_str = 0.0
     if abs(eff_vis) < 1e-05 and abs(eff_aud) < 1e-05 and (abs(c_str) < 1e-05):
         return (model, clip)
+    mute_audio_branch = abs(eff_aud) < 1e-05
+    mute_visual_branch = abs(eff_vis) < 1e-05
     lora_sd = _ez_prism_process_video_lora_sd(
         lora_sd,
         primary_basis_map=primary_basis_map,
         is_primary=bool(is_primary_slot and not is_turbo_lora),
         is_turbo=is_turbo_lora,
-        tail_threshold=0.0 if is_turbo_lora else 0.065,
+        tail_threshold=0.0 if (is_turbo_lora or is_pre_prism_merged) else 0.05,
         orth_strength=0.68 if is_turbo_lora else 0.55,
+        skip_audio=mute_audio_branch,
     )
     target_clip = clip if abs(c_str) >= 1e-05 else None
-    if abs(eff_vis - eff_aud) <= 0.0001:
+    if abs(eff_vis - eff_aud) <= 0.0001 and (not mute_audio_branch) and (not mute_visual_branch):
         (out_m, out_c) = comfy.sd.load_lora_for_models(model, target_clip, lora_sd, eff_vis, c_str)
         return (out_m, out_c if target_clip is not None else clip)
-    audio_tokens = ('audio', 'aud_', '_aud', 'attn_a', 'ff_a', 'norm_a', 'proj_a', 'mod_a', 'q_a', 'k_a', 'v_a', 'out_a', 'a_embed', 'audio_vae', 'vocoder', 'mel_', 'sound', 'speaker')
     up_tokens = ('.lora_up', '.lora_b', '.hada_w1', '.lokr_w1')
-    base_str = eff_vis if abs(eff_vis) >= 1e-05 else eff_aud
+    base_str = eff_vis if not mute_visual_branch else eff_aud
     ratio = eff_aud / base_str if abs(base_str) >= 1e-05 else 0.0
     adjusted_sd = {}
     for (k, val) in lora_sd.items():
         low_k = str(k).lower()
-        is_aud_key = any((tok in low_k for tok in audio_tokens))
-        is_up_weight = any((tok in low_k for tok in up_tokens))
-        if isinstance(val, torch.Tensor) and is_up_weight:
-            if is_aud_key and abs(eff_vis) >= 1e-05:
-                adjusted_sd[k] = val * float(ratio)
-            elif not is_aud_key and abs(eff_vis) < 1e-05:
-                adjusted_sd[k] = torch.zeros_like(val)
-            else:
+        is_te_key = ('lora_te' in low_k) or ('text_encoder' in low_k) or ('text_model' in low_k)
+        if is_te_key:
+            if target_clip is not None:
                 adjusted_sd[k] = val
+            continue
+        is_aud_key = _is_av_audio_lora_key(low_k)
+        if is_aud_key and mute_audio_branch:
+            continue
+        if (not is_aud_key) and mute_visual_branch:
+            continue
+        is_up_weight = any((tok in low_k for tok in up_tokens))
+        if isinstance(val, torch.Tensor) and is_up_weight and is_aud_key and (not mute_visual_branch):
+            adjusted_sd[k] = val * float(ratio)
         else:
             adjusted_sd[k] = val
+    if not adjusted_sd:
+        return (model, clip)
     (out_m, out_c) = comfy.sd.load_lora_for_models(model, target_clip, adjusted_sd, base_str, c_str)
     return (out_m, out_c if target_clip is not None else clip)
 
@@ -1015,7 +1042,18 @@ def load_video_engine_and_apply_av_loras(video_unet_fl2va: str, video_unet_ref2v
     video_vae = _load_video_vae_convrot_safe(v_vae_path)
     if audio_vae_name and audio_vae_name != 'None':
         a_vae_path = folder_paths.get_full_path('vae', audio_vae_name)
-        audio_vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(a_vae_path)) if a_vae_path else video_vae
+        if a_vae_path:
+            try:
+                a_loaded = comfy.utils.load_torch_file(str(a_vae_path), return_metadata=True)
+                (a_sd, a_meta) = a_loaded if isinstance(a_loaded, tuple) and len(a_loaded) == 2 else (a_loaded, None)
+                try:
+                    audio_vae = comfy.sd.VAE(sd=a_sd, metadata=a_meta)
+                except TypeError:
+                    audio_vae = comfy.sd.VAE(sd=a_sd)
+            except Exception:
+                audio_vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(a_vae_path))
+        else:
+            audio_vae = video_vae
     else:
         audio_vae = video_vae
     baked_turbo_tokens = (
@@ -1043,7 +1081,7 @@ def load_video_engine_and_apply_av_loras(video_unet_fl2va: str, video_unet_ref2v
     turbo_toks = ('turbo', 'step600', 'step_', 'distill', 'lcm', 'hyper')
     raw_cum_vis = sum((abs(x[1] * x[3]) for x in norm_entries if not any((t in str(x[0]).lower() for t in turbo_toks))))
     max_vis_budget = 0.68 if unet_is_rich_finetune else 0.85
-    if len(norm_entries) >= 2 and raw_cum_vis > max_vis_budget:
+    if len(norm_entries) >= 1 and raw_cum_vis > max_vis_budget:
         vis_scale = max_vis_budget / max(1e-05, raw_cum_vis)
         for x in norm_entries:
             if not any((t in str(x[0]).lower() for t in turbo_toks)):
@@ -1135,8 +1173,14 @@ def load_video_engine_and_apply_av_loras(video_unet_fl2va: str, video_unet_ref2v
             setattr(torch.backends.cuda.matmul, 'allow_fp16_accumulation', fp16_accum_active)
     except Exception:
         pass
-    eff_shift_v = 5.0 if has_turbo_lora and abs(float(shift_video) - 11.0) < 0.05 else float(shift_video)
-    eff_shift_a = 3.0 if has_turbo_lora and abs(float(shift_audio) - 4.0) < 0.05 else float(shift_audio)
+    raw_shift_v = float(shift_video)
+    raw_shift_a = float(shift_audio)
+    if has_turbo_lora and raw_shift_v > 7.0:
+        eff_shift_v = 5.0
+        print(f'[EZ-05-SHIFT-GUARD] ⚡ Sänker shift_video ({raw_shift_v:.1f} -> {eff_shift_v:.1f}) för destillerad PikaFlex/Turbo-modell så att högfrekvent ansikts- och texturskärpa bevaras.')
+    else:
+        eff_shift_v = raw_shift_v
+    eff_shift_a = 3.0 if (has_turbo_lora and raw_shift_a > 3.5) else raw_shift_a
     if detected_video_arch == 'minimax_h3':
         try:
             from comfy_extras.nodes_minimax_h3 import MiniMaxH3SigmaShift
@@ -1169,7 +1213,7 @@ def load_video_engine_and_apply_av_loras(video_unet_fl2va: str, video_unet_ref2v
             m_target.model_options['shift_audio'] = eff_shift_a
             m_target.model_options['has_turbo_lora'] = bool(has_turbo_lora)
             m_target.model_options['unet_has_baked_turbo'] = bool(unet_has_baked_turbo)
-            m_target.model_options['cumulative_lora_vis_gain'] = float(min(raw_cum_vis, max_vis_budget) if len(norm_entries) >= 2 else raw_cum_vis)
+            m_target.model_options['cumulative_lora_vis_gain'] = float(min(raw_cum_vis, max_vis_budget) if len(norm_entries) >= 1 else raw_cum_vis)
             m_target.model_options['enable_fp16_accumulation'] = fp16_accum_active
             m_target.model_options['hardware_tier'] = str(prof.get('tier_id', 'tier_1_rtx5070ti_16gb'))
     if not has_distinct_ref2va and ref_path and hasattr(model_ref2va, 'model_options') and isinstance(model_ref2va.model_options, dict):
